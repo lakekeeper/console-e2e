@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "lakekeeper",
+      "credentials": [
+        { "accessKey": "lakekeeper", "secretKey": "lakekeeper-secret" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

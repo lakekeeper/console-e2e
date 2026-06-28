@@ -1,0 +1,107 @@
+# Backend stack for the E2E matrix engine.
+# Orchestrated by run.mjs, which sets TEST_MODE (selects modes/<mode>.env) and
+# LK_IMAGE (OSS vs Plus). Ports match the apps' existing .env so no app rewiring
+# is needed: lakekeeper :8181, keycloak :30080, openfga :35081, postgres :5432.
+#
+# Host networking note: lakekeeper reaches keycloak via host.docker.internal:30080
+# (the *published* port) so the token issuer matches what the browser sees
+# (http://localhost:30080). OPENID_ADDITIONAL_ISSUERS in the mode files accepts the
+# localhost form too.
+
+x-lk-common: &lk-common
+  image: ${LK_IMAGE:-quay.io/lakekeeper/catalog:latest-main}
+  env_file:
+    - ./modes/${TEST_MODE:-authn}.env
+  environment:
+    # Injected from .env.secret by run.mjs (only the cedar mode needs it).
+    LAKEKEEPER__LICENSE__KEY: ${LAKEKEEPER__LICENSE__KEY:-}
+  volumes:
+    # Cedar policy files. Harmless to mount in other modes.
+    - ${CEDAR_POLICY_DIR}:/policies:ro
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16.4
+    command: ["-c", "max_connections=10000"]
+    environment:
+      POSTGRES_PASSWORD: postgres
+    # No host port published — only reached by lakekeeper over the compose network.
+    # Avoids clashing with a dev postgres on :5432.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  openfga:
+    image: openfga/openfga:v1.8
+    command: run
+    # No host ports — lakekeeper reaches it at openfga:8081 over the compose network.
+
+  # S3-compatible object storage for warehouse tests (SeaweedFS). Reached by
+  # lakekeeper at http://seaweedfs:8333 over the compose network; browser/LoQE
+  # use localhost:8333. Credentials come from seaweedfs/s3.json.
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data -ip.bind=0.0.0.0
+    volumes:
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    ports:
+      - "8333:8333" # S3 API (browser/LoQE)
+    # No healthcheck — the seaweedfs image has no wget/curl. bucket-init retries
+    # the S3 endpoint itself until it's ready, which is the real readiness gate.
+
+  # One-shot: create the warehouse test bucket via the S3 API (mc = the S3 CLI;
+  # works against any S3-compatible store, here SeaweedFS).
+  bucket-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      - seaweedfs
+    environment:
+      AWS_ACCESS_KEY_ID: lakekeeper
+      AWS_SECRET_ACCESS_KEY: lakekeeper-secret
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        for i in $$(seq 1 30); do
+          aws --endpoint-url http://seaweedfs:8333 s3 mb s3://lakekeeper-test && break;
+          echo 'waiting for seaweedfs s3...'; sleep 2;
+        done;
+        aws --endpoint-url http://seaweedfs:8333 s3api put-bucket-cors --bucket lakekeeper-test
+        --cors-configuration '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","POST","DELETE","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag"]}]}' || true
+    restart: "no"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command:
+      - start-dev
+      - --import-realm
+      - --health-enabled=true
+      - --features=token-exchange
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    volumes:
+      - ${KEYCLOAK_REALM_FILE}:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "30080:8080"
+
+  # One-shot DB/authz migration. Run via `docker compose run --rm migrate`.
+  migrate:
+    <<: *lk-common
+    command: migrate
+    restart: "no"
+
+  lakekeeper:
+    <<: *lk-common
+    command: serve
+    ports:
+      - "8181:8181"
+    # Readiness is polled over HTTP by run.mjs (http://localhost:8181/health),
+    # which avoids depending on the in-container binary path.
