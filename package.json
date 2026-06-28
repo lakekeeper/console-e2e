@@ -1,0 +1,36 @@
+{
+  "name": "@lakekeeper/console-e2e",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared E2E test framework for Lakekeeper console & console-plus — both apps × auth modes (noauth/authn/authz/cedar) against a real Lakekeeper stack.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lakekeeper/console-e2e.git"
+  },
+  "bin": {
+    "lakekeeper-e2e": "./run.mjs"
+  },
+  "files": [
+    "run.mjs",
+    "playwright.config.ts",
+    "docker-compose.yml",
+    "modes",
+    "seaweedfs",
+    "specs",
+    "justfile",
+    ".env.example",
+    ".env.secret.example",
+    "README.md"
+  ],
+  "scripts": {
+    "matrix": "node run.mjs",
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "dotenv": "^16.4.5",
+    "monocart-reporter": "^2.12.1"
+  }
+}
