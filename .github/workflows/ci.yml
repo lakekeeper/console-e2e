@@ -1,0 +1,37 @@
+name: ci
+
+# Self-CI for the test framework itself — keeps console-e2e's own code valid.
+# It does NOT run the matrix (that needs a Lakekeeper stack, the Plus image, and
+# secrets — that's the separate release gate). This is fast (~1 min), no stack,
+# no secrets: typecheck, syntax-check the orchestration, and confirm the specs +
+# dynamic Playwright config load for both webServer branches.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (specs + playwright.config)
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Syntax-check orchestration scripts
+        run: node --check run.mjs && node --check dashboard.mjs && node --check catalog.mjs && node --check reporters/current.mjs
+
+      - name: Specs + config load (authn = dual webServer, cedar = premium path)
+        run: |
+          APP=console TEST_MODE=authn npx playwright test --list
+          APP=console-plus TEST_MODE=cedar npx playwright test --list
