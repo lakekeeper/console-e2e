@@ -14,7 +14,12 @@ dotenv.config({ path: path.resolve(dir, '.env.secret') });
 const mode = process.env.TEST_MODE || 'authn';
 const app = process.env.APP || 'console';
 const port = process.env.APP_PORT || '5001';
-const baseURL = `http://localhost:${port}`;
+// SERVED_UI: test the console EMBEDDED in the lakekeeper (plus) docker image —
+// served at :8181/ui by the image itself — instead of a local npm dev server.
+// Same origin for UI + API (no CORS between them); the pre-built image is
+// configured via LAKEKEEPER__UI__* (no VITE_* needed). Set by `just test-matrix-docker`.
+const servedUI = process.env.SERVED_UI === '1';
+const baseURL = servedUI ? process.env.LK_UI_URL || 'http://localhost:8181' : `http://localhost:${port}`;
 // Second app origin for the storage CORS test (a real LoQE SELECT * from a
 // non-allowed origin). The AWS bucket CORS allows :3001 but not :3002.
 const port2 = '3002';
@@ -99,6 +104,9 @@ export default defineConfig({
     : browser === 'webkit'
       ? new RegExp(`@smoke\\b`)
       : new RegExp(`@${mode}\\b`),
+  // Served-UI has no second (:3002) app instance, so the storage-CORS negative
+  // test can't run — and SeaweedFS' wildcard CORS makes it moot anyway. Exclude it.
+  grepInvert: servedUI ? /storage CORS/ : undefined,
 
   use: {
     baseURL,
@@ -124,7 +132,9 @@ export default defineConfig({
     },
   ],
 
-  webServer: [
+  // Served-UI: no dev server — the lakekeeper docker image already serves the
+  // console at baseURL. Everything else (specs, fixtures) is unchanged.
+  webServer: servedUI ? [] : [
     {
       // dev:test hardcodes :5001 — pass the port explicitly so APP_PORT wins
       // (e.g. :3001, which the AWS bucket's CORS allows for browser→S3 in LoQE).

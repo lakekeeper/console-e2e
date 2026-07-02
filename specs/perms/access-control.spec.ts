@@ -6,6 +6,15 @@ import { openLoqeAndAttach, createTableViaLoqe, loqeReadTable } from '../_utils/
 import { grantTableRelation } from '../_utils/permissions';
 import { grantAnnaTableReadCedar, resetCedarPolicy } from '../_utils/cedar';
 
+// anna runs in a FRESH browser context (separate session from peter), which does
+// NOT inherit the Playwright config baseURL — so it must be set explicitly. In the
+// docker matrix (served-UI) the app is the image's embedded console at :8181; the
+// npm matrix serves it at :3001.
+const ANNA_BASE_URL =
+  process.env.SERVED_UI === '1'
+    ? process.env.LK_UI_URL || 'http://localhost:8181'
+    : 'http://localhost:3001';
+
 // Permission ENFORCEMENT via a real data read — the whole point of authz. A
 // non-admin (anna) must be DENIED reading a table until the admin (peter) grants
 // her access, then ALLOWED. The read is a LoQE (DuckDB-WASM) SELECT against the
@@ -34,7 +43,7 @@ test.describe('access control @authz', () => {
 
     // 2 · anna (no grants) is DENIED — she can't even see the warehouse to attach
     //     it, so the SELECT fails ("Catalog does not exist").
-    const denyCtx = await browser.newContext({ baseURL: 'http://localhost:3001' });
+    const denyCtx = await browser.newContext({ baseURL: ANNA_BASE_URL });
     const annaDenied = await denyCtx.newPage();
     await login(annaDenied, TEST_USER_2);
     const before = await loqeReadTable(annaDenied, wh, ns, tbl, 2);
@@ -47,7 +56,7 @@ test.describe('access control @authz', () => {
 
     // 4 · anna is now ALLOWED — she sees + attaches the warehouse and the SELECT
     //     returns the value 1.
-    const okCtx = await browser.newContext({ baseURL: 'http://localhost:3001' });
+    const okCtx = await browser.newContext({ baseURL: ANNA_BASE_URL });
     const annaAllowed = await okCtx.newPage();
     await login(annaAllowed, TEST_USER_2);
     const after = await loqeReadTable(annaAllowed, wh, ns, tbl, 4);
@@ -85,7 +94,7 @@ test.describe('access control (cedar) @cedar', () => {
     await createTableViaLoqe(page, wh, ns, tbl);
 
     // 2 · anna is DENIED (base policy grants her nothing).
-    const denyCtx = await browser.newContext({ baseURL: 'http://localhost:3001' });
+    const denyCtx = await browser.newContext({ baseURL: ANNA_BASE_URL });
     const annaDenied = await denyCtx.newPage();
     await login(annaDenied, TEST_USER_2);
     const before = await loqeReadTable(annaDenied, wh, ns, tbl, 2);
@@ -99,7 +108,7 @@ test.describe('access control (cedar) @cedar', () => {
     await page.waitForTimeout(6000);
 
     // 4 · anna is now ALLOWED — SELECT returns 1.
-    const okCtx = await browser.newContext({ baseURL: 'http://localhost:3001' });
+    const okCtx = await browser.newContext({ baseURL: ANNA_BASE_URL });
     const annaAllowed = await okCtx.newPage();
     await login(annaAllowed, TEST_USER_2);
     const after = await loqeReadTable(annaAllowed, wh, ns, tbl, 5);

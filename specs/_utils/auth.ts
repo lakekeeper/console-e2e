@@ -25,7 +25,10 @@ export const TEST_USER_2: AuthCredentials = {
  * OIDC login through Keycloak. No-op in noauth mode (no login screen).
  */
 export async function login(page: Page, credentials: AuthCredentials = TEST_USER) {
-  await page.goto('/');
+  // Served-UI (docker image) mode: the console lives under /ui/ on the lakekeeper
+  // origin, and `/` is the API root (not the SPA). The npm dev server serves the
+  // SPA at `/`, so keep that path there.
+  await page.goto(process.env.SERVED_UI === '1' ? '/ui/' : '/');
 
   if (!isAuthMode) return; // noauth: app is reachable directly
 

@@ -17,6 +17,19 @@ const files = fs.existsSync(resultsDir)
   ? fs.readdirSync(resultsDir).filter((f) => f.endsWith('.json') && f !== 'current.json' && !f.startsWith('unit'))
   : []; // current.json (live marker) + unit*.json (component unit tests) are not combos
 
+// Archived runs: run.mjs copies playwright-report/ → history/<stamp>__<scope>/ after
+// every run and never auto-prunes them. Offer them in a dropdown so past runs stay
+// browsable (no need to delete artifacts to keep the view clean). Newest first.
+const historyDir = path.join(dir, 'history');
+const runs = fs.existsSync(historyDir)
+  ? fs
+      .readdirSync(historyDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && fs.existsSync(path.join(historyDir, d.name, 'index.html')))
+      .map((d) => d.name)
+      .sort()
+      .reverse()
+  : [];
+
 // Component unit tests (Vitest), written by run.mjs runUnitTests() → results/unit.json.
 let unit = [];
 try {
@@ -217,11 +230,23 @@ const html = `<!doctype html><meta charset="utf-8"><title>Test Matrix Dashboard<
  .u-ok{color:#1a7d44} .u-fail{color:#b32020} .u-skip{color:#888}
  .curtest{font-size:1rem;font-weight:600;color:#7a4d00;margin-top:.5rem;font-family:ui-monospace,monospace;min-height:1.2em}
  .runsub{font-size:.95rem;font-weight:400;margin-top:.4rem}
+ .runpick{padding:.5rem 1rem;border:1px solid #e3e3ef;border-radius:8px;margin-bottom:1rem;font-size:12px;background:#fafaff}
+ .runpick select{font:inherit;padding:3px 6px;border:1px solid #cdd;border-radius:6px;max-width:60%}
+ .rp-note{color:#778;margin-left:.5rem}
  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(240,165,0,.55)}50%{box-shadow:0 0 0 10px rgba(240,165,0,0)}}
 </style>
 <h1>Test Matrix Dashboard</h1>
 <p class="sub">Every test × every app·mode. Latest result per combo (accumulates across runs — partial runs only update their own columns). Auto-refreshes every 30s. ✅ pass · ❌ fail · ⚠️ flaky · ➖ skipped/n-a · · not run in that mode.<br>
 Click a <b>combo column ↗</b> to open its native Playwright report (traces/video). Full merged report: <a href="playwright-report/index.html" target="_blank">playwright-report ↗</a>.</p>
+${
+  runs.length
+    ? `<div class="runpick">📂 <b>Browse an archived run:</b>
+<select onchange="if(this.value)window.open(this.value,'_blank')">
+<option value="">— pick one of ${runs.length} archived runs —</option>
+${runs.map((r) => `<option value="history/${encodeURIComponent(r)}/index.html">${esc(r)}</option>`).join('')}
+</select><span class="rp-note">each run's full report is kept until you delete it (<code>just test-history</code> / <code>test-history-keep</code>).</span></div>`
+    : ''
+}
 ${runBanner}<div class="banner ${totalF ? 'red' : 'green'}">${totalF ? `❌ ${totalF} failing across the matrix` : `✅ all ${totalP} executed checks green`} — ${comboNames.length} combos.</div>
 ${
   unit.length

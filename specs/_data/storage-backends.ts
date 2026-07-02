@@ -36,6 +36,11 @@ export interface StorageBackend {
 
 const env = process.env;
 const has = (...keys: string[]) => keys.every((k) => !!env[k]);
+// Cloud backends: enabled only when their creds exist AND we're not in served-UI
+// (docker image) mode. Served-UI tests the pushed image's embedded UI at :8181,
+// but the cloud buckets' CORS only allows the :3001 dev origin — so restrict the
+// docker matrix to local SeaweedFS (wildcard CORS). See `just test-matrix-docker`.
+const cloud = (...keys: string[]) => env.SERVED_UI !== '1' && has(...keys);
 
 async function fillS3Compat(scope: Locator) {
   // Local SeaweedFS (S3-compatible). The endpoint must be reachable from BOTH the
@@ -54,6 +59,21 @@ async function fillS3Compat(scope: Locator) {
   if (await pathStyle.isVisible().catch(() => false)) {
     await pathStyle.check().catch(() => pathStyle.click());
   }
+  // Deep flows (docker matrix, S3_LOCAL_DEEP=1) need STS-vended creds so the browser
+  // LoQE write succeeds — plain access-key vending 404s the write (same failure mode
+  // as AWS). SeaweedFS AssumeRole (LakekeeperVendedRole in seaweedfs/s3.json) vends
+  // short-lived creds. The npm matrix leaves STS off (create+verify only).
+  if (env.S3_LOCAL_DEEP === '1') {
+    const stsToggle = scope.getByText(/Enable STS/i).first();
+    if (await stsToggle.isVisible().catch(() => false)) await stsToggle.click();
+    const roleArn = scope.getByLabel(/STS Role ARN/i).first();
+    await roleArn.waitFor({ timeout: 5000 }).catch(() => {});
+    await fillIfPresent(
+      scope,
+      /STS Role ARN/i,
+      env.S3_LOCAL_STS_ROLE_ARN || 'arn:aws:iam::000000000000:role/LakekeeperVendedRole',
+    );
+  }
 }
 
 export const STORAGE_BACKENDS: StorageBackend[] = [
@@ -64,15 +84,18 @@ export const STORAGE_BACKENDS: StorageBackend[] = [
     // LAN-IP endpoint so it's reachable from both browser and container. Opt out
     // with S3_LOCAL_ENABLE=0.
     enabled: process.env.S3_LOCAL_ENABLE !== '0',
-    // create+verify only — the detail page's browser-side storage explorer can't
-    // reach local SeaweedFS (no CORS), so skip open/namespace/table for it.
-    deepFlows: false,
+    // Deep flows (browser open→namespace→table→LoQE read/write) need the bucket
+    // reachable from the browser WITH write-CORS. Off by default (npm matrix: the
+    // shipped bucket-init sets wildcard CORS, but we keep the historical create+verify
+    // behavior). The docker matrix (served-UI) sets S3_LOCAL_DEEP=1 to turn it ON so
+    // LoQE + access-control actually run against the pushed image, fully local (no AWS).
+    deepFlows: env.S3_LOCAL_DEEP === '1',
     fill: fillS3Compat,
   },
   {
     key: 's3 (aws)',
     tab: /AWS S3|Amazon S3/i,
-    enabled: has('AWS_S3_BUCKET', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'),
+    enabled: cloud('AWS_S3_BUCKET', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'),
     fill: async (scope) => {
       // credential type = access-key (radio), if the AWS variant shows the toggle
       const accessKeyRadio = scope.getByRole('radio', { name: /access key/i }).first();
@@ -113,7 +136,7 @@ export const STORAGE_BACKENDS: StorageBackend[] = [
   {
     key: 'r2 (cloudflare)',
     tab: /Cloudflare R2|^R2$/i,
-    enabled: has('R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ACCOUNT_ID'),
+    enabled: cloud('R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ACCOUNT_ID'),
     fill: async (scope) => {
       await fillIfPresent(scope, /Access Key ID/i, env.R2_ACCESS_KEY_ID!);
       await fillIfPresent(scope, /Secret Access Key/i, env.R2_SECRET_ACCESS_KEY!);
@@ -124,7 +147,7 @@ export const STORAGE_BACKENDS: StorageBackend[] = [
   {
     key: 'adls (azure)',
     tab: /Azure|ADLS/i,
-    enabled: has('ADLS_ACCOUNT_NAME', 'ADLS_FILESYSTEM', 'ADLS_CLIENT_ID', 'ADLS_CLIENT_SECRET', 'ADLS_TENANT_ID'),
+    enabled: cloud('ADLS_ACCOUNT_NAME', 'ADLS_FILESYSTEM', 'ADLS_CLIENT_ID', 'ADLS_CLIENT_SECRET', 'ADLS_TENANT_ID'),
     fill: async (scope) => {
       await fillIfPresent(scope, /Account Name/i, env.ADLS_ACCOUNT_NAME!);
       await fillIfPresent(scope, /Filesystem/i, env.ADLS_FILESYSTEM!);
@@ -136,7 +159,7 @@ export const STORAGE_BACKENDS: StorageBackend[] = [
   {
     key: 'onelake (fabric)',
     tab: /OneLake/i,
-    enabled: has('ONELAKE_ACCOUNT_NAME', 'ONELAKE_FILESYSTEM', 'ONELAKE_CLIENT_ID', 'ONELAKE_CLIENT_SECRET', 'ONELAKE_TENANT_ID'),
+    enabled: cloud('ONELAKE_ACCOUNT_NAME', 'ONELAKE_FILESYSTEM', 'ONELAKE_CLIENT_ID', 'ONELAKE_CLIENT_SECRET', 'ONELAKE_TENANT_ID'),
     fill: async (scope) => {
       await fillIfPresent(scope, /Account Name/i, env.ONELAKE_ACCOUNT_NAME!);
       await fillIfPresent(scope, /Filesystem|Workspace/i, env.ONELAKE_FILESYSTEM!);
@@ -148,7 +171,7 @@ export const STORAGE_BACKENDS: StorageBackend[] = [
   {
     key: 'gcs (google)',
     tab: /GCS|Google/i,
-    enabled: has('GCS_BUCKET', 'GCS_SERVICE_ACCOUNT_KEY'),
+    enabled: cloud('GCS_BUCKET', 'GCS_SERVICE_ACCOUNT_KEY'),
     fill: async (scope) => {
       await fillIfPresent(scope, /Bucket Name/i, env.GCS_BUCKET!);
       // GCS uses a service-account JSON key — pasted into the key field.

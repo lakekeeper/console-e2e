@@ -48,11 +48,21 @@ services:
   # use localhost:8333. Credentials come from seaweedfs/s3.json.
   seaweedfs:
     image: chrislusf/seaweedfs:latest
-    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data -ip.bind=0.0.0.0
+    # -s3.iam.config enables STS/AssumeRole so Lakekeeper can vend short-lived creds
+    # to the browser (LoQE writes). The AWS_* env must match the s3.json identity or
+    # AssumeRole can't authenticate the caller (seaweedfs-sts gotcha). Plain
+    # (non-STS) access still works, so the npm matrix's create+verify is unaffected.
+    environment:
+      AWS_ACCESS_KEY_ID: lakekeeper
+      AWS_SECRET_ACCESS_KEY: lakekeeper-secret
+    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -s3.iam.config=/etc/seaweedfs/s3.json -dir=/data -ip.bind=0.0.0.0
     volumes:
       - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     ports:
-      - "8333:8333" # S3 API (browser/LoQE)
+      # Host port is configurable (run.mjs sets S3_LOCAL_HOST_PORT, default 8334)
+      # so the e2e coexists with a dev SeaweedFS already holding :8333. Container
+      # still listens on 8333; the warehouse endpoint uses the host LAN IP + this port.
+      - "${S3_LOCAL_HOST_PORT:-8334}:8333" # S3 API (browser/LoQE)
     # No healthcheck — the seaweedfs image has no wget/curl. bucket-init retries
     # the S3 endpoint itself until it's ready, which is the real readiness gate.
 

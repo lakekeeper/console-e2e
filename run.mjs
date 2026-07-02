@@ -39,9 +39,15 @@ function hostLanIp() {
   }
   return null;
 }
+// Published on a non-default host port (8334, not 8333) so the e2e SeaweedFS
+// coexists with a locally-running dev stack that already owns :8333 — otherwise
+// the container can't bind the port and the seaweedfs journey fails. The
+// container still listens on 8333 internally; only the host mapping moves.
+const s3Port = env.S3_LOCAL_HOST_PORT || '8334';
+env.S3_LOCAL_HOST_PORT = s3Port;
 if (!env.S3_LOCAL_ENDPOINT) {
   const ip = hostLanIp();
-  if (ip) env.S3_LOCAL_ENDPOINT = `http://${ip}:8333`;
+  if (ip) env.S3_LOCAL_ENDPOINT = `http://${ip}:${s3Port}`;
 }
 
 const ALL_APPS = ['console', 'console-plus'];
@@ -67,7 +73,21 @@ const opt = (name) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const has = (name) => args.includes(name);
-const apps = (opt('--app') || ALL_APPS.join(',')).split(',').filter(Boolean);
+// SERVED_UI: test the console EMBEDDED in the pushed lakekeeper-plus docker image
+// (served at :8181/ui by the image) instead of a local npm dev server. One
+// pseudo-app "docker": the image ships the plus console + supports every mode, so
+// we don't split by app or filter by APP_MODES. Playwright reads SERVED_UI too
+// (skips its webServer, points baseURL at :8181).
+const servedUI = env.SERVED_UI === '1';
+// Docker matrix drives the full local LoQE read/write flow against seaweed (STS +
+// wildcard CORS make it browser-usable, no AWS). Turn seaweed deep flows on here so
+// storage-backends.ts flips deepFlows for the seaweedfs backend — the npm matrix,
+// which never sets this, keeps its historical create+verify behavior.
+if (servedUI && !env.S3_LOCAL_DEEP) env.S3_LOCAL_DEEP = '1';
+// Pinned pushed image under test; override with LK_IMAGE_DOCKER in .env.
+const LK_IMAGE_DOCKER =
+  env.LK_IMAGE_DOCKER || 'quay.io/vakamo/lakekeeper-plus:d731e0e6-distroless-arm64';
+const apps = servedUI ? ['docker'] : (opt('--app') || ALL_APPS.join(',')).split(',').filter(Boolean);
 const modes = (opt('--mode') || ALL_MODES.join(',')).split(',').filter(Boolean);
 const extraGrep = opt('--grep');
 const keep = has('--keep');
@@ -196,6 +216,24 @@ const results = [];
 
 // Fresh blob dir — each combo drops a blob here; merged into one report at the end.
 fs.rmSync(path.join(dir, 'blob-report'), { recursive: true, force: true });
+// Drop the previous run's Playwright artifacts (screenshots/traces/DOM snapshots).
+// Playwright already wipes test-results per `playwright test`, so mid-matrix it only
+// ever holds the LAST combo — clearing here makes a fresh run start truly clean and
+// avoids stale dirs from a prior session confusing diagnosis.
+fs.rmSync(path.join(dir, 'test-results'), { recursive: true, force: true });
+// Show only THIS run on the dashboard: drop prior runs' per-combo result JSONs so the
+// matrix reflects the current invocation's combos, not an accumulation across sessions
+// (past runs stay fully browsable via the history/ dropdown). Keep unit*.json (rewritten
+// by runUnitTests when it runs; preserved for --grep/--up runs) and current.json (live
+// marker). Skipped for --up (brings the stack up without running tests).
+if (!upOnly) {
+  const resultsDir = path.join(dir, 'results');
+  for (const f of fs.existsSync(resultsDir) ? fs.readdirSync(resultsDir) : []) {
+    if (f.endsWith('.json') && !f.startsWith('unit') && f !== 'current.json') {
+      fs.rmSync(path.join(resultsDir, f), { force: true });
+    }
+  }
+}
 
 // Show "run in progress" on the dashboard immediately (over last run's data).
 if (!upOnly) buildDashboard({ RUN_IN_PROGRESS: '1' });
@@ -214,18 +252,24 @@ for (const app of apps) {
       console.error(`⚠️  unknown mode "${mode}" — skipping`);
       continue;
     }
-    if (!APP_MODES[app]?.includes(mode)) {
+    if (!servedUI && !APP_MODES[app]?.includes(mode)) {
       console.log(`↳ ${app} does not support ${mode} (cedar is console-plus only) — skipping`);
       continue;
     }
-    const lkImage =
-      mode === 'cedar' ? env.LK_IMAGE_PLUS : env.LK_IMAGE_OSS;
+    const lkImage = servedUI
+      ? LK_IMAGE_DOCKER
+      : mode === 'cedar'
+        ? env.LK_IMAGE_PLUS
+        : env.LK_IMAGE_OSS;
     const stackEnv = { TEST_MODE: mode, LK_IMAGE: lkImage };
 
     console.log(`\n${'='.repeat(70)}\n▶ ${app} · ${mode}  (image: ${lkImage})\n${'='.repeat(70)}`);
 
-    if (mode === 'cedar' && !env.LAKEKEEPER__LICENSE__KEY) {
-      console.error('✗ cedar mode requires LAKEKEEPER__LICENSE__KEY in e2e/.env.secret — skipping');
+    // The plus image is licensed software → every mode needs the key, not just cedar.
+    if ((mode === 'cedar' || servedUI) && !env.LAKEKEEPER__LICENSE__KEY) {
+      console.error(
+        `✗ ${servedUI ? 'docker (plus image)' : 'cedar mode'} requires LAKEKEEPER__LICENSE__KEY in e2e/.env.secret — skipping`,
+      );
       results.push({ app, mode, code: -1, note: 'no license' });
       continue;
     }
@@ -246,6 +290,13 @@ for (const app of apps) {
       if (mig.status !== 0) throw new Error('migrate failed');
       compose(['up', '-d', 'lakekeeper'], stackEnv);
       await waitFor('lakekeeper', HEALTH, { timeoutMs: 120_000 });
+      // Served-UI: also confirm the image is serving the embedded console before
+      // Playwright (which has no dev server of its own to wait on) starts.
+      if (servedUI) {
+        await waitFor('console UI', `${env.LK_UI_URL || 'http://localhost:8181'}/ui/`, {
+          timeoutMs: 60_000,
+        });
+      }
 
       // --up: bring the stack up and LEAVE it running (for `just test-ui` /
       // manual clicking). No tests, no teardown.

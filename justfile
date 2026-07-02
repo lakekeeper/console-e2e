@@ -10,6 +10,20 @@ test-setup:
 test-matrix:
     node run.mjs
 
+# Full matrix, CHROMIUM ONLY — both apps × all modes, skips firefox/webkit passes.
+test-matrix-chrome:
+    NO_CROSS_BROWSER=1 node run.mjs
+
+# DOCKER IMAGE matrix — tests the pushed lakekeeper-plus image's EMBEDDED UI
+# (served at :8181/ui, no local npm), all modes, seaweedfs-only, chromium.
+# Image + license come from .env (LK_IMAGE_DOCKER, LAKEKEEPER__LICENSE__KEY).
+test-matrix-docker:
+    SERVED_UI=1 NO_CROSS_BROWSER=1 node run.mjs
+
+# One mode against the pushed docker image's embedded UI, e.g. `just test-docker authn`
+test-docker mode:
+    SERVED_UI=1 NO_CROSS_BROWSER=1 node run.mjs --mode {{mode}}
+
 # E2E CODE COVERAGE (chromium combos only — V8/CDP is chromium-only). Builds
 # console-components WITH sourcemaps so coverage maps to real source, clears the
 # apps' vite caches so the fresh dist is used, runs the chromium matrix collecting
@@ -31,6 +45,11 @@ test-unit:
 # One combo, e.g. `just test-one console authn`
 test-one app mode:
     node run.mjs --app {{app}} --mode {{mode}}
+
+# One combo, CHROMIUM ONLY — skips the firefox/webkit cross-browser passes.
+# Fast iteration on a single combo, e.g. `just test-chrome console-plus authn`
+test-chrome app mode:
+    NO_CROSS_BROWSER=1 node run.mjs --app {{app}} --mode {{mode}}
 
 # One app, all modes, e.g. `just test-app console-plus`
 test-app app:
