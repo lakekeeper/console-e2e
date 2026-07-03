@@ -112,9 +112,13 @@ All recipes are namespaced `test-`:
 | --- | --- |
 | `just test-setup` | install deps + chromium |
 | `just test-one <app> <mode>` | one combo, e.g. `just test-one console-plus cedar` |
+| `just test-chrome <app> <mode>` | one combo, **chromium only** (skips firefox/webkit — fast iteration) |
 | `just test-app <app>` | one app, all its modes |
 | `just test-mode <mode>` | one mode, both apps |
 | `just test-matrix` | **the full matrix** (both apps × all modes × browsers) |
+| `just test-matrix-chrome` | the full matrix, **chromium only** |
+| `just test-matrix-docker` | **docker-image matrix** — the pushed lakekeeper-plus image's *embedded* UI, all modes, seaweedfs-only ([details](#testing-the-shipped-docker-image)) |
+| `just test-docker <mode>` | one mode against the pushed docker image |
 | `just test-unit` | component-repo Vitest unit tests (standalone) |
 | `just test-coverage` | e2e code coverage on the chromium combos (see [Coverage](#coverage)) |
 | `just test-dashboard` | build + serve the matrix dashboard |
@@ -133,14 +137,44 @@ All recipes are namespaced `test-`:
 
 - **`just test-dashboard`** → `DASHBOARD.html`: every test × every app·mode·browser
   with the latest pass/fail. Frozen header + frozen first column, scrollable. While a
-  run is active it shows an **in-progress** banner with the **live test name**. It
-  *accumulates* across runs (a partial run only updates its own columns).
+  run is active it shows an **in-progress** banner with the **live test name**. Each
+  run **resets** the matrix to just that run's combos (every `just test-*` clears the
+  previous run's results at start); past runs stay browsable via the **archived-run
+  dropdown** at the top of the page.
 - **`just test-report`** → the merged Playwright report: traces, video, and a
   screenshot of every step (e.g. the CORS test's `:3001` result vs `:3002` error box).
 - **`just test-catalog`** → `TEST-CATALOG.md`/`.html`: what test cases exist, ordered
   by journey — a planning view that needs no run.
 - **History**: every full run is archived under `history/<timestamp>__<scope>` and
   kept until you delete it (`just test-history`, `test-history-keep`).
+
+---
+
+## Testing the shipped Docker image
+
+The normal matrix serves each app from a local **npm dev server** (testing your
+working-tree source). `just test-matrix-docker` instead tests the **console that ships
+*inside* a pushed `lakekeeper-plus` image** — the embedded UI it serves at `:8181/ui`,
+same origin as its API. This validates the release artifact end-to-end, not local source.
+
+- **Image**: `LK_IMAGE_DOCKER` in `.env` (pinned tag; arm64 for Apple-Silicon podman).
+- **No npm server**: `SERVED_UI=1` points Playwright's `baseURL` at `:8181`; the pre-built
+  image is configured via `LAKEKEEPER__UI__*` (no `VITE_*`). Needs the license key.
+- **SeaweedFS only, fully local (no AWS)**: cloud backends are disabled; the local
+  SeaweedFS warehouse vends short-lived creds via **STS** so the in-browser LoQE
+  write/read round-trip works. `S3_LOCAL_DEEP=1` turns on the deep flows (LoQE +
+  access-control) for it; wildcard bucket CORS makes the `:3002` CORS-negative test moot.
+- **Split-horizon**: the warehouse endpoint is the **host LAN IP** (`run.mjs` auto-detects
+  it) so it resolves from *both* the lakekeeper container and the host browser.
+
+```
+just test-matrix-docker      # all modes against the pushed image
+just test-docker authn       # one mode
+```
+
+> The auto-detected LAN-IP endpoint is verified on macOS/Windows (VM-based runtimes).
+> On native Linux / CI the container→host-IP hairpin may need an explicit
+> `S3_LOCAL_ENDPOINT` override.
 
 ---
 
