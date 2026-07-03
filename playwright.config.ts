@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices, type ReporterDescription } from '@playwright/test';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -74,7 +74,7 @@ export default defineConfig({
     // Maps browser coverage back to console-components/console source via sourcemaps
     // (console-components must be built with --sourcemap; see `just test-coverage`).
     ...(process.env.E2E_COVERAGE === '1' && browser === 'chromium'
-      ? [
+      ? ([
           [
             'monocart-reporter',
             {
@@ -92,7 +92,7 @@ export default defineConfig({
               },
             },
           ],
-        ]
+        ] as ReporterDescription[])
       : []),
   ],
   // chromium: run all specs tagged for the active mode (e.g. @authz). firefox/webkit:
