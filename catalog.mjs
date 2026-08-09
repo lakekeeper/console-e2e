@@ -75,6 +75,7 @@ const SPEC_ORDER = [
   'flows/loqe',
   'flows/warehouse',
   'flows/role',
+  'flows/governance-tags',
   'perms/access-control',
   'storage/cors',
 ];
