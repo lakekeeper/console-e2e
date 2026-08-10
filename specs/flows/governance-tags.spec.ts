@@ -33,7 +33,11 @@ test.describe('governance tags @authn @authz @cedar', () => {
   const textTag = 'e2e.classification';
 
   test('define, attach, view, and delete tags', async ({ bootstrappedPage: page }) => {
-    test.setTimeout(120000);
+    // 3 min, not 2: this is a long multi-step journey, and the FIRST run against a
+    // cold Vite dev server compiles the /governance/tags routes on-demand (~80s),
+    // which alone nearly exhausts a 2-min budget before step 7. The bundled image
+    // console has no on-demand compile, so it's comfortably faster there.
+    test.setTimeout(180000);
     const { wh, ns } = await seedWarehouseWithNamespace(page, backend);
 
     await test.step('1 · create a marker and a free-text tag definition', async () => {
@@ -73,8 +77,20 @@ test.describe('governance tags @authn @authz @cedar', () => {
 
     await test.step("7 · can't delete a tag definition that's still attached", async () => {
       await openTagDefinition(page, textTag);
-      await page.getByRole('button', { name: 'Delete tag' }).click();
-      await expect(page.getByText("Can't delete tag")).toBeVisible({ timeout: 10000 });
+      // The detail page's action buttons wire up slightly after paint (the same
+      // Vuetify activator race the tag helpers guard against), and the npm dev build
+      // is slower than the bundled image — a bare click can be swallowed so the guard
+      // dialog never appears. Settle, then retry the click until the guard shows
+      // (same "click until it takes" pattern used elsewhere for Vuetify races).
+      await page.waitForLoadState('networkidle').catch(() => {});
+      const deleteBtn = page.getByRole('button', { name: 'Delete tag' });
+      const guard = page.getByText("Can't delete tag");
+      await expect(deleteBtn).toBeEnabled({ timeout: 10000 });
+      for (let i = 0; i < 4 && !(await guard.isVisible().catch(() => false)); i++) {
+        await deleteBtn.click().catch(() => {});
+        await guard.waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
+      }
+      await expect(guard).toBeVisible({ timeout: 5000 });
       await page.getByRole('button', { name: 'Close' }).click();
     });
 

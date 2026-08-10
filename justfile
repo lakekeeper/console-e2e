@@ -112,3 +112,10 @@ test-report-combo app mode:
 # Tear everything down
 test-down:
     docker-compose -f docker-compose.yml down -v --remove-orphans
+
+# Wipe the accumulated matrix (all combo results) for a fresh slate, then rebuild the
+# (now-empty) dashboard. Keeps unit results + history/ archives. Runs accumulate the
+# matrix across combos/apps; use this when you want to start the dashboard clean.
+test-clear:
+    find results -name '*.json' ! -name 'unit*' ! -name 'current.json' -delete 2>/dev/null || true
+    node dashboard.mjs && echo "dashboard cleared"

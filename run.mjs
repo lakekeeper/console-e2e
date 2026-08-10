@@ -221,17 +221,21 @@ fs.rmSync(path.join(dir, 'blob-report'), { recursive: true, force: true });
 // ever holds the LAST combo — clearing here makes a fresh run start truly clean and
 // avoids stale dirs from a prior session confusing diagnosis.
 fs.rmSync(path.join(dir, 'test-results'), { recursive: true, force: true });
-// Show only THIS run on the dashboard: drop prior runs' per-combo result JSONs so the
-// matrix reflects the current invocation's combos, not an accumulation across sessions
-// (past runs stay fully browsable via the history/ dropdown). Keep unit*.json (rewritten
-// by runUnitTests when it runs; preserved for --grep/--up runs) and current.json (live
-// marker). Skipped for --up (brings the stack up without running tests).
-if (!upOnly) {
+// Refresh ONLY the combos this invocation will (re)produce, so unrelated combos stay
+// on the dashboard — the npm matrix and the docker matrix coexist, and a targeted run
+// (e.g. `test-docker noauth`) updates just its own cell instead of wiping the whole
+// matrix. A combo's files are `<app>-<mode>.json` plus optional `-firefox`/`-webkit`
+// browser variants; strip the browser suffix to match. Keep unit*.json + current.json.
+// `just test-clear` wipes everything for a deliberately fresh slate. Skipped for --up.
+if (!upOnly && !extraGrep) {
+  const willRun = new Set();
+  for (const app of apps)
+    for (const mode of modes) if (servedUI || APP_MODES[app]?.includes(mode)) willRun.add(`${app}-${mode}`);
   const resultsDir = path.join(dir, 'results');
   for (const f of fs.existsSync(resultsDir) ? fs.readdirSync(resultsDir) : []) {
-    if (f.endsWith('.json') && !f.startsWith('unit') && f !== 'current.json') {
-      fs.rmSync(path.join(resultsDir, f), { force: true });
-    }
+    if (!f.endsWith('.json') || f.startsWith('unit') || f === 'current.json') continue;
+    const base = f.replace(/\.json$/, '').replace(/-(firefox|webkit)$/, '');
+    if (willRun.has(base)) fs.rmSync(path.join(resultsDir, f), { force: true });
   }
 }
 
