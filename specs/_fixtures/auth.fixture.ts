@@ -49,6 +49,18 @@ async function ensureBootstrapped(page: Page) {
 
   // Bootstrap done → app redirects off /bootstrap.
   await page.waitForURL((url) => !url.pathname.includes('bootstrap'), { timeout: 25000 });
+
+  // …and STAYS off it. Leaving /bootstrap once is not the same as being done:
+  // console-plus boots heavier, and its router guard has re-fetched serverInfo
+  // and bounced BACK to /bootstrap after this fixture returned — which then
+  // interrupts the test's own first navigation ("Navigation to /ui/logout is
+  // interrupted by another navigation to /ui/bootstrap"). Settle, then confirm.
+  for (let i = 0; i < 5; i++) {
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(1000);
+    if (!page.url().includes('/bootstrap')) return;
+    await page.waitForURL((url) => !url.pathname.includes('bootstrap'), { timeout: 15000 }).catch(() => {});
+  }
 }
 
 export const test = base.extend<AuthFixtures>({

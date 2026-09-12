@@ -1,6 +1,6 @@
 import { test, expect } from '../_fixtures/auth.fixture';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
-import { seedWarehouseWithNamespace, openWarehouse } from '../_utils/warehouse';
+import { seedWarehouseWithNamespace, openWarehouse, openNamespace } from '../_utils/warehouse';
 import {
   createTagDefinition,
   openTagDefinition,
@@ -9,6 +9,7 @@ import {
   removeEntityTag,
 } from '../_utils/tags';
 import { login, TEST_USER_2 } from '../_utils/auth';
+import { grantOnCurrentPanel } from '../_utils/permissions';
 
 // anna runs in a FRESH browser context (separate session from peter), same as
 // access-control.spec.ts — it does NOT inherit the Playwright config baseURL.
@@ -57,7 +58,17 @@ test.describe('governance tags @authn @authz @cedar', () => {
     });
 
     await test.step('4 · the tag chip shows up on the warehouse Details tab', async () => {
-      await expect(page.getByText(markerTag, { exact: true }).first()).toBeVisible({ timeout: 10000 });
+      // The chips live on the Details tab (WarehouseDetails), and the warehouse
+      // page opens on "namespaces" — so the tab has to be selected first. Tab
+      // switching no longer navigates (history.replaceState, not router.replace),
+      // so this asserts on the DOM rather than awaiting a URL change.
+      const detailsTab = page.getByRole('tab', { name: /^details$/i });
+      for (let i = 0; i < 5; i++) {
+        await detailsTab.click().catch(() => {});
+        await page.waitForTimeout(800);
+        if ((await detailsTab.getAttribute('aria-selected')) === 'true') break;
+      }
+      await expect(page.getByText(markerTag, { exact: true }).first()).toBeVisible({ timeout: 15000 });
     });
 
     await test.step('5 · reverse lookup: the tag definition lists the warehouse as a target', async () => {
@@ -68,10 +79,7 @@ test.describe('governance tags @authn @authz @cedar', () => {
 
     await test.step('6 · apply the free-text tag (with a value) to the namespace', async () => {
       await openWarehouse(page, wh);
-      // "demo_ns" appears twice (sidebar nav tree + the Namespaces table below it)
-      // — the tree entry doesn't navigate on click, the table row does.
-      await page.getByText(ns, { exact: true }).last().click();
-      await page.waitForURL(/\/namespace\//, { timeout: 10000 });
+      await openNamespace(page, ns);
       await applyEntityTag(page, { tagName: textTag, value: 'confidential' });
     });
 
@@ -103,10 +111,7 @@ test.describe('governance tags @authn @authz @cedar', () => {
 
       // Detach the free-text tag from the namespace (applied in step 6).
       await openWarehouse(page, wh);
-      // "demo_ns" appears twice (sidebar nav tree + the Namespaces table below it)
-      // — the tree entry doesn't navigate on click, the table row does.
-      await page.getByText(ns, { exact: true }).last().click();
-      await page.waitForURL(/\/namespace\//, { timeout: 10000 });
+      await openNamespace(page, ns);
       await openManageTagsMenu(page);
       await removeEntityTag(page, textTag);
 
@@ -122,18 +127,20 @@ test.describe('governance tags @authn @authz @cedar', () => {
   });
 });
 
-// Tag permissions (ownership / apply) are an OpenFGA-only concept — same reasoning
-// as roles (see role.spec.ts): Cedar has no per-object grant UI, and noauth/authn
-// have no authorizer at all.
-test.describe('governance tag permissions @authz', () => {
+// Per-tag access control. The permissions UI is gone in 0.23
+// (PERMISSIONS_UI_ENABLED=false), so this runs through the tag definition's
+// **Grants** tab instead — same intent, authorizer-agnostic API. Still @authz
+// only: noauth/authn have no authorizer, and the cedar combo decides tag access
+// by policy rather than by a grant made in the UI.
+test.describe('governance tag grants @authz', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test('grant and revoke apply/ownership on a tag definition', async ({ bootstrappedPage: page, browser }) => {
-    test.setTimeout(60000);
+  test('grant and revoke privileges on a tag definition', async ({ bootstrappedPage: page, browser }) => {
+    test.setTimeout(90000);
     const tagName = 'e2e.perm-test';
 
     // Lakekeeper only knows a user once they've authenticated at least once —
-    // searchUser('anna') returns nothing before that. Register her with a
+    // the principal search returns nothing before that. Register her with a
     // throwaway login in a separate context (same as access-control.spec.ts).
     const annaCtx = await browser.newContext({ baseURL: ANNA_BASE_URL });
     const annaPage = await annaCtx.newPage();
@@ -143,57 +150,71 @@ test.describe('governance tag permissions @authz', () => {
     await createTagDefinition(page, { name: tagName, valueKind: 'marker', scope: ['Warehouse'] });
     await openTagDefinition(page, tagName);
 
-    // Same flakiness permissions.ts documents for the table Permissions tab: it
-    // can reset to "details" while data loads — click until it sticks.
-    const permTab = page.getByRole('tab', { name: 'Permissions' });
-    for (let i = 0; i < 5; i++) {
-      await permTab.click().catch(() => {});
+    // Same Vuetify race the other detail pages have: the tab model resets to
+    // "details" while the definition loads — click until it sticks.
+    const grantsTab = page.getByRole('tab', { name: 'Grants' });
+    await expect(grantsTab).toBeVisible({ timeout: 15000 });
+    for (let i = 0; i < 6; i++) {
+      await grantsTab.click().catch(() => {});
       await page.waitForTimeout(1000);
-      if ((await permTab.getAttribute('aria-selected')) === 'true') break;
+      if ((await grantsTab.getAttribute('aria-selected')) === 'true') break;
     }
 
     const annaRow = page.getByRole('row', { name: new RegExp(TEST_USER_2.username, 'i') });
 
     await test.step('grant "apply" to anna', async () => {
-      // Same Vuetify-dialog flakiness grantTableRelation guards against (the
-      // search result occasionally never settles) — retry the whole flow.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          await page.getByRole('button', { name: /^grant$/i }).first().click({ timeout: 10000 });
-          await page.getByRole('tab', { name: /user/i }).first().click({ timeout: 5000 }).catch(() => {});
-          const combo = page.getByRole('combobox').last();
-          await combo.fill(TEST_USER_2.username, { timeout: 8000 });
-          const option = page.getByRole('option', { name: new RegExp(TEST_USER_2.username, 'i') }).first();
-          await option.waitFor({ state: 'visible', timeout: 10000 });
-          await option.click({ timeout: 8000 });
-          await page.getByRole('checkbox', { name: 'apply' }).check({ timeout: 8000 });
-          await page.getByRole('button', { name: /^save$/i }).click({ timeout: 8000 });
-          await expect(annaRow).toBeVisible({ timeout: 8000 });
-          break;
-        } catch {
-          await page.keyboard.press('Escape').catch(() => {});
-          await page.waitForTimeout(1000);
-          if (await annaRow.isVisible({ timeout: 2000 }).catch(() => false)) break;
-        }
-      }
-      await expect(annaRow).toBeVisible({ timeout: 8000 });
-      await expect(annaRow.getByText('Can apply')).toBeVisible();
+      await grantOnCurrentPanel(page, TEST_USER_2.username, ['apply']);
+      await expect(annaRow.first()).toBeVisible({ timeout: 10000 });
     });
 
-    await test.step('edit the assignment to add "ownership"', async () => {
-      await annaRow.getByRole('button', { name: /^edit$/i }).click();
-      await page.getByRole('checkbox', { name: 'ownership' }).check();
-      await page.getByRole('button', { name: /^save$/i }).click();
-      await expect(annaRow.getByText('Owner')).toBeVisible({ timeout: 10000 });
+    await test.step('edit the grant to add ownership', async () => {
+      await annaRow.first().getByRole('button', { name: /^edit$/i }).click();
+      const dialog = page.locator('.v-overlay__content').filter({ hasText: 'Edit grants' }).last();
+      await expect(dialog).toBeVisible({ timeout: 10000 });
+      const ownership = dialog.getByRole('checkbox', { name: /ownership/i }).first();
+      await ownership.check({ timeout: 8000 });
+      await dialog.getByRole('button', { name: /^save$/i }).click();
+      await expect(dialog).toBeHidden({ timeout: 15000 });
+      // The row's privilege columns are counts; expanding it lists the names.
+      await expect(annaRow.first()).toBeVisible({ timeout: 10000 });
     });
 
     await test.step('revoke all access', async () => {
-      await annaRow.getByRole('button', { name: /revoke all/i }).click();
-      // Two "Revoke all" buttons exist once the confirm dialog is open (the row's
-      // outlined trigger + the dialog's flat confirm) — the dialog's is teleported
-      // to the end of <body>, so it's the last match.
+      await annaRow.first().getByRole('button', { name: /revoke all/i }).click();
+      // Two "Revoke all" controls exist once the confirm dialog is open (the row's
+      // trigger + the dialog's flat confirm); the dialog's is teleported to the end
+      // of <body>, so it is the last match.
       await page.getByRole('button', { name: 'Revoke all', exact: true }).last().click();
-      await expect(annaRow).toHaveCount(0, { timeout: 10000 });
+      await expect(annaRow).toHaveCount(0, { timeout: 15000 });
     });
+  });
+});
+
+// Tag management with authentication DISABLED. This was broken before 0.23 (the
+// vocabulary needed a caller the server could name), so noauth had no tag
+// coverage at all. Definitions are project-scoped and need no warehouse, which
+// is what makes this runnable in a mode the storage journeys skip.
+test.describe('governance tags (noauth) @noauth', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  const tagName = 'e2e.noauth-tag';
+
+  test('define and delete a tag definition with auth disabled', async ({ bootstrappedPage: page }) => {
+    test.setTimeout(120000);
+
+    await createTagDefinition(page, { name: tagName, valueKind: 'marker', scope: ['Warehouse'] });
+
+    await openTagDefinition(page, tagName);
+    await expect(page.getByText('marker', { exact: true }).first()).toBeVisible({ timeout: 15000 });
+
+    // Grants are hidden under `allow-all`: that authorizer permits everything, so
+    // a grant there would enforce nothing. Its absence is the assertion.
+    await expect(page.getByRole('tab', { name: 'Grants' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Delete tag' }).click();
+    await page.getByLabel('Tag definition name').fill(tagName);
+    await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(page).toHaveURL(/\/governance\?tab=tags/, { timeout: 15000 });
+    await expect(page.getByText(tagName, { exact: true })).toHaveCount(0);
   });
 });

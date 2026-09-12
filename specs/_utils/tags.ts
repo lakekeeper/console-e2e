@@ -41,6 +41,15 @@ async function pickOptions(page: Page, labels: string[]) {
   await page.keyboard.press('Escape');
 }
 
+/** Tick the tag definition's scopes. Scope stopped being a v-select in 0.23 — the
+ *  six options are all on screen as checkboxes, so there is no menu to open. */
+async function pickScopes(page: Page, dialog: ReturnType<Page['locator']>, scopes: string[]) {
+  for (const scope of scopes) {
+    const cb = dialog.getByRole('checkbox', { name: scope, exact: true });
+    await cb.check().catch(() => cb.click().catch(() => {}));
+  }
+}
+
 /** Create a tag definition (idempotent: reuses it if it's already in the list).
  *  Returns the tag name. `scope` defaults to warehouse+namespace+table+view so the
  *  same definition can be exercised at every entity level. */
@@ -62,26 +71,28 @@ export async function createTagDefinition(
   }
 
   await page.getByRole('button', { name: 'New Tag', exact: true }).click();
-  await page.getByLabel('Name', { exact: true }).fill(name);
+  const dialog = page.locator('.v-overlay__content').filter({ hasText: 'New Tag Definition' }).last();
+  await expect(dialog).toBeVisible({ timeout: 10000 });
+
+  await dialog.getByLabel('Name', { exact: true }).fill(name);
   if (opts.description) {
-    await page.getByLabel('Description', { exact: true }).fill(opts.description);
+    await dialog.getByLabel('Description', { exact: true }).fill(opts.description);
   }
 
   await openSelect(page, 'Value kind');
   await page.getByRole('option', { name: VALUE_KIND_LABEL[valueKind] }).click();
 
-  await openSelect(page, 'Scope');
-  await pickOptions(page, scope);
+  await pickScopes(page, dialog, scope);
 
   if (valueKind === 'enumerated' && opts.allowedValues?.length) {
-    const combo = page.getByLabel(/Allowed values/i);
+    const combo = dialog.getByLabel(/Allowed values/i);
     for (const v of opts.allowedValues) {
       await combo.fill(v);
       await page.keyboard.press('Enter');
     }
   }
 
-  await page.getByRole('button', { name: /^save$/i }).click();
+  await dialog.getByRole('button', { name: /^save$/i }).click();
   await expect(page.getByText(name, { exact: true }).first()).toBeVisible({ timeout: 10000 });
   return name;
 }
@@ -116,45 +127,103 @@ export async function openManageTagsMenu(page: Page) {
   await page.waitForTimeout(1000);
 }
 
-/** Locate the open "Manage tags" dialog specifically. The cog's v-menu can
- *  linger open behind/beside it (a Vuetify nested-overlay quirk — clicking a
- *  menu item that itself opens a dialog doesn't reliably close the menu), so
- *  an unscoped page-wide search for row action buttons can hit the stray menu
- *  instead of the dialog. Scoping to this container sidesteps that entirely. */
+/** Locate the open "Manage tags" dialog. It is fullscreen since 0.23 (toolbar,
+ *  a two-column panel, Close), but the cog's v-menu can still linger open beside
+ *  it — a Vuetify nested-overlay quirk — so every lookup stays scoped here rather
+ *  than searching the page and hitting the stray menu. */
 function manageTagsDialog(page: Page) {
   return page.locator('.v-overlay__content').filter({ hasText: 'Manage tags' }).last();
 }
 
-/** Remove a direct (non-inherited) tag row from the open "Manage tags" dialog,
- *  via its delete icon + type-to-confirm flow, then close the dialog. Only the
- *  delete-icon lookup is scoped to the dialog + row (it has no text, so an
- *  unscoped page-wide match risks the stray menu above); the confirm sub-
- *  dialog's own fields are unambiguous by text, no scoping needed. */
-export async function removeEntityTag(page: Page, tagName: string) {
+/** A tag row in the dialog's right column ("ASSIGNED"). The component marks each
+ *  card `tag-row--direct` or `tag-row--inherited`; matching on `.v-card` instead
+ *  also catches the dialog's own card (and with it the toolbar's close button). */
+function assignedTagRow(page: Page, tagName: string) {
+  return manageTagsDialog(page).locator('.tag-row--direct').filter({ hasText: tagName }).first();
+}
+
+/** The definitions offered in the dialog's left column ("AVAILABLE TAGS").
+ *  Scoping by the column heading is brittle — the heading's own <div> carries
+ *  the text but none of the rows. The two columns are different element kinds
+ *  instead: available tags are v-list items, assigned tags are v-cards. */
+function availableTagRows(page: Page) {
+  return manageTagsDialog(page).getByRole('listitem');
+}
+
+/** Close the fullscreen "Manage tags" dialog and wait for its scrim to clear —
+ *  a lingering overlay intercepts clicks on the page underneath. */
+async function closeManageTags(page: Page) {
   const dialog = manageTagsDialog(page);
-  await dialog.getByRole('row', { name: new RegExp(tagName) }).locator('button:has(.mdi-delete-outline)').click();
-  await page.getByLabel(/Type/, { exact: false }).fill(tagName);
-  await page.getByRole('button', { name: 'Remove', exact: true }).click();
-  await page.keyboard.press('Escape');
-  // Let the dialog's closing (fade-out) transition finish — its scrim
-  // overlay otherwise lingers and intercepts clicks on the next page.
+  const close = dialog.getByRole('button', { name: /^close$/i }).last();
+  if (await close.isVisible().catch(() => false)) await close.click().catch(() => {});
+  else await page.keyboard.press('Escape').catch(() => {});
+  await dialog.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
   await page.locator('.v-overlay__scrim').first().waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
 }
 
-/** Open the "Manage tags" dialog and apply a tag with an optional value. */
+/** Remove a direct (non-inherited) tag from the open "Manage tags" dialog, then
+ *  close it. There is no type-to-confirm step any more: the ASSIGNED column's
+ *  row carries a red close button that unassigns immediately ("Changes apply
+ *  immediately", per the dialog's own footer). */
+export async function removeEntityTag(page: Page, tagName: string) {
+  // The assigned row is a v-card, not a table row — match the card holding the
+  // tag name and click its (only) destructive icon button.
+  const row = assignedTagRow(page, tagName);
+  await expect(row).toBeVisible({ timeout: 15000 });
+  // The row's own (red) close button unassigns. The dialog toolbar has an
+  // mdi-close too, which is why this is scoped to the row and not the dialog.
+  await row.locator('button:has(.mdi-close)').last().click();
+  // The panel reloads its lists after the write; the name must be gone from the
+  // ASSIGNED column before the dialog is closed, or a later re-open races it.
+  await expect(row).toBeHidden({ timeout: 15000 });
+  await closeManageTags(page);
+}
+
+/** Open the "Manage tags" dialog and apply a tag, optionally with a value.
+ *
+ *  The panel is two columns now: clicking a definition in AVAILABLE TAGS applies
+ *  a MARKER straight away; a free-text / enumerated tag expands an inline value
+ *  editor under the row instead (text field + Assign, or a chip per allowed
+ *  value). There is no "Apply tag" button and no Save — writes land on click. */
 export async function applyEntityTag(page: Page, opts: { tagName: string; value?: string }) {
   await openManageTagsMenu(page);
 
-  await page.getByRole('button', { name: 'Apply tag', exact: true }).click();
-  const tagField = page.getByLabel('Tag', { exact: true });
-  await tagField.focus();
-  await tagField.fill(opts.tagName);
-  await page.getByRole('option', { name: opts.tagName, exact: true }).click();
+  const dialog = manageTagsDialog(page);
+  const assignedCard = assignedTagRow(page, opts.tagName);
+
+  // The available column defaults to "Not assigned", so a tag already applied to
+  // this entity is filtered out of it. Combos share backend state and these
+  // helpers are idempotent, so widen to "All" before looking for the definition.
+  await dialog.getByRole('button', { name: 'All', exact: true }).first().click().catch(() => {});
+  await page.waitForTimeout(500);
+
+  const definitionRow = availableTagRows(page).filter({ hasText: opts.tagName }).first();
+  await expect(definitionRow).toBeVisible({ timeout: 15000 });
+
+  // Clicking a MARKER that is already assigned UNASSIGNS it (the row is a toggle),
+  // so an idempotent apply has to check first. A valued tag re-opens its editor
+  // instead, which is safe to redo.
+  const alreadyAssigned = await assignedCard.isVisible({ timeout: 2000 }).catch(() => false);
+  if (alreadyAssigned && !opts.value) {
+    await closeManageTags(page);
+    return;
+  }
+
+  await definitionRow.click();
 
   if (opts.value) {
-    await page.getByLabel('Value', { exact: true }).fill(opts.value);
+    // Free text: the inline editor's field has no label, only a "Value"
+    // placeholder. Enumerated: the allowed values render as clickable chips.
+    const valueField = dialog.getByPlaceholder('Value').filter({ visible: true }).first();
+    if (await valueField.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await valueField.fill(opts.value);
+      await dialog.getByRole('button', { name: /^(assign|update)$/i }).first().click();
+    } else {
+      await dialog.getByRole('button', { name: opts.value, exact: true }).first().click();
+    }
   }
-  await page.getByRole('button', { name: /^save$/i }).click();
-  await expect(page.getByText(opts.tagName, { exact: true }).first()).toBeVisible({ timeout: 10000 });
-  await page.keyboard.press('Escape');
+
+  // The write is confirmed by the tag turning up in the ASSIGNED column.
+  await expect(assignedCard).toBeVisible({ timeout: 15000 });
+  await closeManageTags(page);
 }

@@ -33,6 +33,13 @@ export async function refreshWarehouses(page: Page) {
   }
 }
 
+/** The open "Add Warehouse" modal. It is fullscreen now (one rail: Settings ·
+ *  a tab per storage provider · Tools), so the storage subform is no longer in
+ *  a `.v-window-item--active` — scoping to the overlay is what isolates it. */
+function createWarehouseDialog(page: Page) {
+  return page.locator('.v-overlay__content').filter({ hasText: 'Add new warehouse' }).last();
+}
+
 /** Create a warehouse for the given storage backend (idempotent-ish: if it already
  *  exists the list still shows it, which is all callers assert). Returns its name. */
 export async function createWarehouse(page: Page, backend: StorageBackend) {
@@ -44,12 +51,41 @@ export async function createWarehouse(page: Page, backend: StorageBackend) {
     (await page.getByRole('treeitem', { name: new RegExp(wh) }).first().isVisible({ timeout: 3000 }).catch(() => false)) ||
     (await page.getByText(wh, { exact: true }).first().isVisible({ timeout: 1000 }).catch(() => false));
   if (already) return wh;
+
   await page.getByRole('button', { name: /add warehouse/i }).first().click();
-  await page.getByLabel(/Warehouse Name/i).first().fill(wh);
-  await page.getByRole('tab', { name: backend.tab }).click();
-  const panel = page.locator('.v-window-item--active');
-  await backend.fill(panel);
-  await panel.getByRole('button', { name: /^create$/i }).click();
+  const dialog = createWarehouseDialog(page);
+  await expect(dialog).toBeVisible({ timeout: 15000 });
+
+  // The name lives in the rail's "Settings" pane, which is where the dialog opens.
+  await dialog.getByLabel(/Warehouse Name/i).first().fill(wh);
+
+  // Second, authoritative idempotency check. The list above can still be loading
+  // when it is read (the nav tree does not refresh itself after a create), but the
+  // dialog asks the server: a taken name disables Verify & Create and says so.
+  // Without this a shared-state re-run stalls on a permanently disabled button.
+  if (await dialog.getByText(/Name already taken/i).first().isVisible({ timeout: 3000 }).catch(() => false)) {
+    await dialog.getByRole('button', { name: /^cancel$/i }).click().catch(() => {});
+    await expect(dialog).toBeHidden({ timeout: 10000 }).catch(() => {});
+    return wh;
+  }
+
+  // Provider rail. The pane it selects is a v-show div, not a window item, and
+  // only the selected provider's form is mounted — so `dialog` is a safe scope.
+  await dialog.getByRole('tab', { name: backend.tab }).click();
+  await backend.fill(dialog);
+
+  // "Create" became "Verify & Create": it runs the server-side storage validation
+  // first and only creates when that passes. It also switches the rail to the
+  // Verify pane while the request is in flight, so give it room — a failed
+  // validation leaves the dialog open with its report, which is the useful
+  // failure to surface rather than a bare timeout on the list.
+  const submit = dialog.getByRole('button', { name: /verify\s*&\s*create|^create$/i });
+  await expect(submit).toBeEnabled({ timeout: 15000 });
+  await submit.click();
+  await expect(dialog).toBeHidden({ timeout: 60000 }).catch(async () => {
+    const report = await dialog.innerText().catch(() => '');
+    throw new Error(`warehouse create did not complete (validation report):\n${report.replace(/\s+/g, ' ').slice(0, 600)}`);
+  });
   await expect(page.getByText(wh, { exact: false }).first()).toBeVisible({ timeout: 20000 });
   return wh;
 }
@@ -64,6 +100,20 @@ export async function openWarehouse(page: Page, wh: string) {
     await page.waitForURL(/\/ui\/warehouse\/[^/]+/, { timeout: 5000 }).catch(() => {});
   }
   await expect(page).toHaveURL(/\/ui\/warehouse\/[^/]+/, { timeout: 5000 });
+}
+
+/** Open a namespace from the warehouse detail page's Namespaces table.
+ *  The name appears twice — the sidebar nav tree (which does NOT navigate on
+ *  click) and the table row (which does) — so this takes the last match, and
+ *  retries until the route actually changes: the first click is regularly
+ *  swallowed while the page is still settling. */
+export async function openNamespace(page: Page, ns: string) {
+  const row = page.getByText(ns, { exact: true }).last();
+  for (let i = 0; i < 5 && !/\/namespace\//.test(page.url()); i++) {
+    await row.click().catch(() => {});
+    await page.waitForURL(/\/namespace\//, { timeout: 6000 }).catch(() => {});
+  }
+  await expect(page).toHaveURL(/\/namespace\//, { timeout: 10000 });
 }
 
 /** Add a namespace on the currently-open warehouse detail page (idempotent). */

@@ -3,7 +3,7 @@ import { login, TEST_USER_2 } from '../_utils/auth';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
 import { seedWarehouseWithNamespace } from '../_utils/warehouse';
 import { openLoqeAndAttach, createTableViaLoqe, loqeReadTable } from '../_utils/loqe';
-import { grantTableRelation } from '../_utils/permissions';
+import { grantTableRead } from '../_utils/permissions';
 import { grantAnnaTableReadCedar, resetCedarPolicy } from '../_utils/cedar';
 
 // anna runs in a FRESH browser context (separate session from peter), which does
@@ -21,8 +21,10 @@ const ANNA_BASE_URL =
 // table peter creates. FGA only here — Cedar grants work differently (a policy
 // edit), covered separately (@cedar). No authz ⇒ no gate, so not tagged @authn.
 //
-// FGA model (confirmed empirically): a TABLE-level `select` grant is enough — FGA
-// cascades the ancestor describe/list so anna can see + attach the warehouse.
+// Grants model (0.23, replacing the removed permissions UI): grants do NOT
+// inherit, so a table `select` alone leaves the warehouse invisible. The admin
+// grants describe on the warehouse, describe on the namespace and select on the
+// table — see _utils/permissions.ts.
 test.describe('access control @authz', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -51,8 +53,9 @@ test.describe('access control @authz', () => {
     expect(before.errored, 'anna SELECT should fail before any grant').toBeTruthy();
     await denyCtx.close();
 
-    // 3 · peter grants anna `select` on the TABLE via the Permissions-tab UI.
-    await grantTableRelation(page, wh, ns, tbl, 'anna', 'select');
+    // 3 · peter grants anna the read chain (warehouse → namespace → table) via
+    //     the Grants-tab UI.
+    await grantTableRead(page, wh, ns, tbl, 'anna');
 
     // 4 · anna is now ALLOWED — she sees + attaches the warehouse and the SELECT
     //     returns the value 1.
