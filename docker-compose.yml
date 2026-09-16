@@ -63,6 +63,11 @@ services:
       # so the e2e coexists with a dev SeaweedFS already holding :8333. Container
       # still listens on 8333; the warehouse endpoint uses the host LAN IP + this port.
       - "${S3_LOCAL_HOST_PORT:-8334}:8333" # S3 API (browser/LoQE)
+      # The same S3 API on a port browsers refuse to connect to (Fetch standard's
+      # bad-ports list). lakekeeper reaches it via the host LAN IP, the browser
+      # does not — which is the asymmetry specs/storage/reachability.spec.ts needs
+      # to prove the console blames the port rather than CORS.
+      - "${S3_BADPORT_HOST_PORT:-10080}:8333"
     # No healthcheck — the seaweedfs image has no wget/curl. bucket-init retries
     # the S3 endpoint itself until it's ready, which is the real readiness gate.
 

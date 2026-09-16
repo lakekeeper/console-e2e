@@ -71,6 +71,7 @@ const SPEC_ORDER = [
   'auth/noauth-access',
   'auth/logout',
   'smoke/route-smoke',
+  'smoke/server-settings',
   'flows/warehouse-lifecycle',
   'flows/loqe',
   'flows/warehouse',
@@ -79,6 +80,7 @@ const SPEC_ORDER = [
   'flows/cedar-policies',
   'perms/access-control',
   'storage/cors',
+  'storage/reachability',
 ];
 const orderOf = (file) => {
   const i = SPEC_ORDER.findIndex((s) => file.includes(s));
