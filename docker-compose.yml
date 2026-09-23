@@ -78,7 +78,7 @@ services:
       # bad-ports list). lakekeeper reaches it via the host LAN IP, the browser
       # does not — which is the asymmetry specs/storage/reachability.spec.ts needs
       # to prove the console blames the port rather than CORS.
-      - "${S3_BADPORT_HOST_PORT:-10080}:9000"
+      - "${S3_BADPORT_HOST_PORT:-6697}:9000"
 
   # One-shot: create the warehouse test bucket. Uses the silo image for its
   # bundled mc, so no second CLI image is pulled.

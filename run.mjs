@@ -49,6 +49,14 @@ if (!env.S3_LOCAL_ENDPOINT) {
   const ip = hostLanIp();
   if (ip) env.S3_LOCAL_ENDPOINT = `http://${ip}:${s3Port}`;
 }
+// Same coexistence problem for the deliberately-unreachable port, and it bit:
+// a dev `badport-s3` container had been holding :10080 for a week, so `compose
+// up` died on the bind and every spec that needs a warehouse failed with what
+// looked like a storage fault. The port cannot be chosen freely — it has to be
+// one the Fetch standard blocks, or the browser would happily connect and the
+// reachability spec would prove nothing. 6697 (IRC/TLS) is on that list and is
+// far less likely to be taken than 10080.
+env.S3_BADPORT_HOST_PORT = env.S3_BADPORT_HOST_PORT || '6697';
 
 const ALL_APPS = ['console', 'console-plus'];
 const ALL_MODES = ['noauth', 'authn', 'authz', 'cedar'];
