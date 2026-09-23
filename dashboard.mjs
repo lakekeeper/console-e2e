@@ -87,6 +87,8 @@ const SPEC_ORDER = [
   'smoke/route-smoke',
   'smoke/server-settings',
   'flows/warehouse-lifecycle',
+  'flows/nav-tree-refresh',
+  'flows/warehouse-settings',
   'flows/loqe',
   'flows/warehouse',
   'flows/role',

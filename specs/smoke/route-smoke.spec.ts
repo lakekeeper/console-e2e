@@ -1,5 +1,6 @@
 import { test, expect } from '../_fixtures/auth.fixture';
 import { login, isAuthMode } from '../_utils/auth';
+import { expectPanesReadable } from '../_utils/app';
 
 // Breadth check: every major route renders its app shell without crashing.
 // Runs in ALL modes — gating differences are asserted in perms specs, not here.
@@ -66,6 +67,10 @@ test.describe('route smoke @smoke @noauth @authn @authz @cedar', () => {
       // The ?tab= query must survive: the page re-applies a bookmarked tab once
       // its gating flags resolve, rewriting the URL through history.replaceState.
       await expect(page).toHaveURL(/\?tab=/, { timeout: 10000 });
+      // A deep-linked tab is the case that reliably reproduced the blended-pane
+      // bug: the pane mounts after its gating flags resolve, with no prior tab
+      // to transition from. "Rendered" has to mean readable, not just present.
+      await expectPanesReadable(page, route);
       console.log(`✓ ${route}`);
     }
   });

@@ -34,9 +34,16 @@ const browserDevice: Record<string, string> = {
   webkit: 'Desktop Safari',
 };
 const isCross = browser !== 'chromium';
+
+// Theme dimension. The recurring "pane blended into its background" bug is
+// invisible in dark theme and shows only on a light surface, so which theme the
+// suite runs in must be deliberate — Playwright's default happened to be light,
+// which is the only reason those specs were even in a position to catch it.
+const theme: 'light' | 'dark' = process.env.THEME === 'dark' ? 'dark' : 'light';
 // Combo key: chromium uses app-mode; firefox/webkit append the browser so their
 // results land in their own columns/report.
-const combo = isCross ? `${app}-${mode}-${browser}` : `${app}-${mode}`;
+const themeSuffix = theme === 'dark' ? '-dark' : '';
+const combo = (isCross ? `${app}-${mode}-${browser}` : `${app}-${mode}`) + themeSuffix;
 
 // Resolve which app to serve.
 const appDir =
@@ -105,11 +112,12 @@ export default defineConfig({
       ? new RegExp(`@smoke\\b`)
       : new RegExp(`@${mode}\\b`),
   // Served-UI has no second (:3002) app instance, so the storage-CORS negative
-  // test can't run — and SeaweedFS' wildcard CORS makes it moot anyway. Exclude it.
+  // test can't run — and Silo's wildcard CORS makes it moot anyway. Exclude it.
   grepInvert: servedUI ? /storage CORS/ : undefined,
 
   use: {
     baseURL,
+    colorScheme: theme,
     // Cap every action (click/fill/check). Without this a stuck click waits out the
     // whole test timeout (we saw a firefox grant-UI click hang the full 5 min before
     // retrying). 20s is generous for a real click but fails a hung one fast so the

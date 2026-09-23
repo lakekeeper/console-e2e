@@ -3,7 +3,7 @@ import { login } from './auth';
 import { recoverFromOffline } from './app';
 import type { StorageBackend } from '../_data/storage-backends';
 
-/** A clean, stable warehouse name from a backend key: demo-aws, demo-seaweedfs. */
+/** A clean, stable warehouse name from a backend key: demo-aws, demo-silo. */
 export function warehouseName(backend: StorageBackend) {
   const slug = (backend.key.match(/\(([^)]+)\)/)?.[1] ?? backend.key).replace(/[^a-z0-9]/gi, '');
   return `demo-${slug}`;
@@ -19,7 +19,7 @@ async function gotoWarehouses(page: Page) {
   // Shake off the transient "Lakekeeper Unreachable" page (auth-hydration race).
   await recoverFromOffline(page);
   // The warehouse nav tree does NOT auto-update after a create — refresh it so a
-  // just-created warehouse actually appears (esp. for the seaweedfs journey).
+  // just-created warehouse actually appears (esp. for the silo journey).
   await refreshWarehouses(page);
 }
 
@@ -142,4 +142,43 @@ export async function seedWarehouseWithNamespace(
   await openWarehouse(page, wh);
   await addNamespace(page, ns);
   return { wh, ns };
+}
+
+/** Add an Iceberg table from the currently-open namespace page (idempotent).
+ *  The schema starts empty, so a field has to be added before Create enables. */
+export async function addTable(page: Page, tbl: string, field = 'a') {
+  const add = page.getByRole('button', { name: /^add table$/i });
+  await expect(add.first()).toBeVisible({ timeout: 15000 });
+  await add.first().click();
+
+  const dialog = page.locator('.v-dialog').filter({ hasText: 'Create Table' }).last();
+  await dialog.getByLabel(/Table Name/i).fill(tbl);
+  await dialog.getByRole('button', { name: /add field/i }).click();
+  await dialog.getByLabel(/Field Name/i).first().fill(field);
+
+  const create = dialog.getByRole('button', { name: /^create table$/i });
+  await expect(create).toBeEnabled({ timeout: 10000 });
+  await create.click();
+  // The dialog closes itself on success, after a short confirmation.
+  await expect(dialog).toBeHidden({ timeout: 20000 });
+}
+
+/** The sidebar navigation tree's item for a name, whatever its depth. */
+export function navTreeItem(page: Page, name: string) {
+  return page.getByRole('treeitem', { name: new RegExp(`\\b${name}\\b`) }).first();
+}
+
+/** Select rows in the namespace's table list and bulk-delete them. */
+export async function bulkDeleteTables(page: Page, names: string[]) {
+  for (const name of names) {
+    const row = page.getByRole('row', { name: new RegExp(`\\b${name}\\b`) }).first();
+    await row.getByRole('checkbox').first().check();
+  }
+  await page.getByRole('button', { name: new RegExp(`^delete \\(${names.length}\\)$`, 'i') }).click();
+
+  const dialog = page.locator('.v-dialog').filter({ hasText: /Delete \d+ tables?\?/ }).last();
+  await dialog.getByRole('button', { name: /^delete$/i }).click();
+  // The dialog stays open to report per-table outcomes; Cancel becomes Close.
+  await expect(dialog.getByRole('button', { name: /^close$/i })).toBeVisible({ timeout: 30000 });
+  await dialog.getByRole('button', { name: /^close$/i }).click();
 }
