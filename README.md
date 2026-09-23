@@ -203,7 +203,28 @@ backend only runs when its creds are present. ⚠️ Use throwaway, least-privil
 The warehouse + LoQE journeys run **per enabled backend** (see
 [`specs/_data/storage-backends.ts`](specs/_data/storage-backends.ts)):
 
-- **Silo** — a local S3 (a maintained MinIO fork), started by the stack; always on. Reachable from both the
+- **Silo** — a local S3 (a maintained MinIO fork), started by the stack; always on.
+
+### Testing a locally-built catalog binary (`LK_BIN`)
+
+`LK_BIN=/path/to/lakekeeper-plus` runs the catalog as a **native binary**
+instead of the compose container:
+
+```sh
+LK_BIN=~/Biz/lakekeeper-enterprise/target/release/lakekeeper-plus \
+  SERVED_UI=1 just test-docker authn
+```
+
+Why it exists: a macOS build cannot go into a Linux image, so testing an
+embedded-UI change would otherwise mean a cross-compile first. `SERVED_UI`
+only talks to the backend over HTTP, so a native binary serves the embedded
+console just as well.
+
+The mode files address services by compose name (`postgres:5432`,
+`openfga:8081`, `host.docker.internal`), which mean nothing on the host, so
+run.mjs rewrites each to its published host port — which is why postgres and
+openfga publish ports at all (on non-default numbers, to coexist with a dev
+stack). Reachable from both the
   browser and the lakekeeper container via the host LAN IP (auto-detected by
   `run.mjs` to solve the [split-horizon](#split-horizon) problem). Create+verify only
   (no deep browser flows by default).

@@ -117,6 +117,18 @@ const HEALTH = 'http://localhost:8181/health';
 // fail with NoSuchBucket — a storage-shaped symptom two layers from the cause.
 const KC_HOST_PORT = env.KC_HOST_PORT || firstFreePort([30080, 30081, 30082, 30083, 30084]);
 env.KC_HOST_PORT = String(KC_HOST_PORT);
+// Postgres and OpenFGA publish host ports only so a natively-running backend
+// (LK_BIN) can reach them; containerised runs still use the compose network.
+env.PG_HOST_PORT = env.PG_HOST_PORT || String(firstFreePort([55432, 55433, 55434]));
+env.FGA_HOST_PORT = env.FGA_HOST_PORT || String(firstFreePort([58081, 58082, 58083]));
+
+/**
+ * LK_BIN runs the catalog as a LOCAL BINARY instead of the compose container.
+ * A macOS-native build cannot go into a Linux image, but SERVED_UI only talks to
+ * the backend over HTTP — so a native binary serves the embedded console just as
+ * well, and skips a 40-minute cross-compile to test a UI change.
+ */
+const LK_BIN = env.LK_BIN || '';
 const KC_DISCOVERY = `http://localhost:${KC_HOST_PORT}/realms/iceberg/.well-known/openid-configuration`;
 
 // Rebuild DASHBOARD.html. Pass {RUN_IN_PROGRESS:'1', RUN_CURRENT} while a run is
@@ -301,6 +313,9 @@ for (const app of apps) {
       continue;
     }
 
+    // Declared out here so the finally block can stop it.
+    let lkProc = null;
+
     try {
       // clean slate
       compose(['down', '-v', '--remove-orphans'], stackEnv);
@@ -339,7 +354,30 @@ for (const app of apps) {
       // migrate (one-shot) then serve
       const mig = compose(['run', '--rm', 'migrate'], stackEnv);
       if (mig.status !== 0) throw new Error('migrate failed');
-      compose(['up', '-d', 'lakekeeper'], stackEnv);
+      if (LK_BIN) {
+        // The mode file addresses everything by compose service name, which
+        // means nothing on the host: rewrite each to the published port. The
+        // browser-facing URLs already say localhost and are left alone.
+        const hostEnv = {};
+        for (const [k, v] of Object.entries(dotenv.parse(
+          fs.readFileSync(path.join(dir, 'modes', genName), 'utf8'),
+        ))) {
+          hostEnv[k] = String(v)
+            .replace('@postgres:5432', `@localhost:${env.PG_HOST_PORT}`)
+            .replace('http://openfga:8081', `http://localhost:${env.FGA_HOST_PORT}`)
+            .replace('host.docker.internal', 'localhost');
+        }
+        console.log(`▶ lakekeeper from ${LK_BIN} (native, not the ${lkImage} image)`);
+        lkProc = spawn(LK_BIN, ['serve'], {
+          stdio: 'inherit',
+          env: { ...env, ...hostEnv },
+        });
+        lkProc.on('exit', (c) => {
+          if (c !== 0 && c !== null) console.error(`✘ lakekeeper binary exited ${c}`);
+        });
+      } else {
+        compose(['up', '-d', 'lakekeeper'], stackEnv);
+      }
       await waitFor('lakekeeper', HEALTH, { timeoutMs: 120_000 });
       // Served-UI: also confirm the image is serving the embedded console before
       // Playwright (which has no dev server of its own to wait on) starts.
@@ -388,6 +426,7 @@ for (const app of apps) {
       results.push({ app, mode, code: 1, note: e.message });
     } finally {
       const isLast = app === apps.at(-1) && mode === modes.at(-1);
+      if (lkProc && !lkProc.killed) lkProc.kill('SIGTERM');
       if (!(keep && isLast)) compose(['down', '-v', '--remove-orphans'], stackEnv);
     }
   }

@@ -32,8 +32,11 @@ services:
     command: ["-c", "max_connections=10000"]
     environment:
       POSTGRES_PASSWORD: postgres
-    # No host port published — only reached by lakekeeper over the compose network.
-    # Avoids clashing with a dev postgres on :5432.
+    # Published on a non-default host port so a natively-running lakekeeper
+    # (LK_BIN) can reach it, while still not clashing with a dev postgres on
+    # :5432. run.mjs picks PG_HOST_PORT from the first free candidate.
+    ports:
+      - "${PG_HOST_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s
@@ -43,7 +46,10 @@ services:
   openfga:
     image: openfga/openfga:v1.8
     command: run
-    # No host ports — lakekeeper reaches it at openfga:8081 over the compose network.
+    # Published for the same reason as postgres: a natively-running lakekeeper
+    # (LK_BIN) has no compose network to reach it on.
+    ports:
+      - "${FGA_HOST_PORT:-58081}:8081"
 
   # S3-compatible object storage for warehouse tests (Silo, a maintained fork of
   # MinIO). Reached by lakekeeper at http://silo:9000 over the compose network;
