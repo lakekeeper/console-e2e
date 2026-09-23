@@ -43,53 +43,56 @@ services:
     command: run
     # No host ports — lakekeeper reaches it at openfga:8081 over the compose network.
 
-  # S3-compatible object storage for warehouse tests (SeaweedFS). Reached by
-  # lakekeeper at http://seaweedfs:8333 over the compose network; browser/LoQE
-  # use localhost:8333. Credentials come from seaweedfs/s3.json.
-  seaweedfs:
-    image: chrislusf/seaweedfs:latest
-    # -s3.iam.config enables STS/AssumeRole so Lakekeeper can vend short-lived creds
-    # to the browser (LoQE writes). The AWS_* env must match the s3.json identity or
-    # AssumeRole can't authenticate the caller (seaweedfs-sts gotcha). Plain
-    # (non-STS) access still works, so the npm matrix's create+verify is unaffected.
+  # S3-compatible object storage for warehouse tests (Silo, a maintained fork of
+  # MinIO). Reached by lakekeeper at http://silo:9000 over the compose network;
+  # the browser/LoQE use the host LAN IP that run.mjs injects.
+  #
+  # Silo serves the S3 API and the STS AssumeRole endpoint from one process with
+  # no IAM config — the warehouse just points `sts-endpoint` at the same URL and
+  # needs no role ARN. That is why this replaced SeaweedFS, whose AssumeRole
+  # needed a hand-written s3.json with a role, a trust policy and a signing key.
+  # Image and settings follow lakekeeper's own examples/minimal compose.
+  silo:
+    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
+    command: server /data --console-address ":9001"
     environment:
-      AWS_ACCESS_KEY_ID: lakekeeper
-      AWS_SECRET_ACCESS_KEY: lakekeeper-secret
-    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -s3.iam.config=/etc/seaweedfs/s3.json -dir=/data -ip.bind=0.0.0.0
-    volumes:
-      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      MINIO_ROOT_USER: lakekeeper
+      MINIO_ROOT_PASSWORD: lakekeeper-secret
+      # LoQE reads and writes this bucket straight from the browser, so the S3
+      # API has to answer cross-origin. MinIO/Silo takes this server-wide, which
+      # replaces the per-bucket CORS rule bucket-init used to PUT.
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    healthcheck:
+      # The image ships mc, so readiness is a real check rather than a retry loop.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
     ports:
       # Host port is configurable (run.mjs sets S3_LOCAL_HOST_PORT, default 8334)
-      # so the e2e coexists with a dev SeaweedFS already holding :8333. Container
-      # still listens on 8333; the warehouse endpoint uses the host LAN IP + this port.
-      - "${S3_LOCAL_HOST_PORT:-8334}:8333" # S3 API (browser/LoQE)
+      # so the e2e coexists with anything already holding :9000. The container
+      # always listens on 9000; the warehouse endpoint uses host LAN IP + this.
+      - "${S3_LOCAL_HOST_PORT:-8334}:9000" # S3 API (browser/LoQE)
       # The same S3 API on a port browsers refuse to connect to (Fetch standard's
       # bad-ports list). lakekeeper reaches it via the host LAN IP, the browser
       # does not — which is the asymmetry specs/storage/reachability.spec.ts needs
       # to prove the console blames the port rather than CORS.
-      - "${S3_BADPORT_HOST_PORT:-10080}:8333"
-    # No healthcheck — the seaweedfs image has no wget/curl. bucket-init retries
-    # the S3 endpoint itself until it's ready, which is the real readiness gate.
+      - "${S3_BADPORT_HOST_PORT:-10080}:9000"
 
-  # One-shot: create the warehouse test bucket via the S3 API (mc = the S3 CLI;
-  # works against any S3-compatible store, here SeaweedFS).
+  # One-shot: create the warehouse test bucket. Uses the silo image for its
+  # bundled mc, so no second CLI image is pulled.
   bucket-init:
-    image: amazon/aws-cli:latest
+    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
     depends_on:
-      - seaweedfs
-    environment:
-      AWS_ACCESS_KEY_ID: lakekeeper
-      AWS_SECRET_ACCESS_KEY: lakekeeper-secret
-      AWS_DEFAULT_REGION: us-east-1
-    entrypoint: ["/bin/sh", "-c"]
+      silo:
+        condition: service_healthy
+    entrypoint: /bin/sh
     command:
-      - >
-        for i in $$(seq 1 30); do
-          aws --endpoint-url http://seaweedfs:8333 s3 mb s3://lakekeeper-test && break;
-          echo 'waiting for seaweedfs s3...'; sleep 2;
-        done;
-        aws --endpoint-url http://seaweedfs:8333 s3api put-bucket-cors --bucket lakekeeper-test
-        --cors-configuration '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","POST","DELETE","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag"]}]}' || true
+      - -c
+      - |
+        mc alias set local http://silo:9000 lakekeeper lakekeeper-secret &&
+        mc mb --ignore-existing local/lakekeeper-test
     restart: "no"
 
   keycloak:

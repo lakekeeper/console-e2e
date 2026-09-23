@@ -25,7 +25,7 @@ async function openLayoutOptions(scope: Locator) {
 // (lakekeeper/lakekeeper#2010: an S3 endpoint on port 10080, which browsers refuse
 // to connect to — it is on the Fetch standard's bad-ports list).
 //
-// The asymmetry is the whole point and compose gives it to us for free: SeaweedFS
+// The asymmetry is the whole point and compose gives it to us for free: Silo
 // is published on the bad port as well, so lakekeeper (container → host LAN IP)
 // reaches it and validates the warehouse, while the browser refuses before a
 // packet leaves. The bucket's CORS is wide open, so any "CORS" wording here is
@@ -39,13 +39,13 @@ test.describe('storage reachability @authn', () => {
   const env = process.env;
   const badPort = env.S3_BADPORT_HOST_PORT || '10080';
   // Same host as the working local endpoint, different (blocked) port.
-  const badEndpoint = (env.S3_LOCAL_ENDPOINT || 'http://seaweedfs:8333').replace(
+  const badEndpoint = (env.S3_LOCAL_ENDPOINT || 'http://silo:9000').replace(
     /:(\d+)(\/|$)/,
     `:${badPort}$2`,
   );
 
   const backend: StorageBackend = {
-    key: 's3 (seaweedfs, blocked port)',
+    key: 's3 (silo, blocked port)',
     tab: /S3 Compatible|S3.?Compat/i,
     enabled: env.S3_LOCAL_ENABLE !== '0',
     fill: async (scope) => {
@@ -72,7 +72,7 @@ test.describe('storage reachability @authn', () => {
   test('names the blocked port instead of blaming CORS', async ({
     bootstrappedPage: page,
   }, testInfo) => {
-    test.skip(!backend.enabled, 'local SeaweedFS backend disabled');
+    test.skip(!backend.enabled, 'local Silo backend disabled');
     test.setTimeout(240000);
 
     const wh = await createWarehouse(page, backend);

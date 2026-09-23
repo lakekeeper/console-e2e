@@ -30,7 +30,7 @@ const env = {
   ...process.env,
 };
 
-// Local SeaweedFS S3 must be reachable from BOTH the browser (host) and the
+// Local Silo S3 must be reachable from BOTH the browser (host) and the
 // lakekeeper container — the host LAN IP satisfies both (localhost fails in the
 // container; the compose hostname fails in the browser). Auto-detect it.
 function hostLanIp() {
@@ -39,9 +39,9 @@ function hostLanIp() {
   }
   return null;
 }
-// Published on a non-default host port (8334, not 8333) so the e2e SeaweedFS
+// Published on a non-default host port (8334, not 9000) so the e2e Silo
 // coexists with a locally-running dev stack that already owns :8333 — otherwise
-// the container can't bind the port and the seaweedfs journey fails. The
+// the container can't bind the port and the silo journey fails. The
 // container still listens on 8333 internally; only the host mapping moves.
 const s3Port = env.S3_LOCAL_HOST_PORT || '8334';
 env.S3_LOCAL_HOST_PORT = s3Port;
@@ -60,10 +60,10 @@ const APP_MODES = {
 };
 // Which backend services each mode needs (migrate + lakekeeper always added).
 const SERVICES = {
-  noauth: ['postgres', 'seaweedfs', 'bucket-init'],
-  authn: ['postgres', 'keycloak', 'seaweedfs', 'bucket-init'],
-  authz: ['postgres', 'openfga', 'keycloak', 'seaweedfs', 'bucket-init'],
-  cedar: ['postgres', 'keycloak', 'seaweedfs', 'bucket-init'],
+  noauth: ['postgres', 'silo', 'bucket-init'],
+  authn: ['postgres', 'keycloak', 'silo', 'bucket-init'],
+  authz: ['postgres', 'openfga', 'keycloak', 'silo', 'bucket-init'],
+  cedar: ['postgres', 'keycloak', 'silo', 'bucket-init'],
 };
 
 // --- arg parsing ---
@@ -79,9 +79,9 @@ const has = (name) => args.includes(name);
 // we don't split by app or filter by APP_MODES. Playwright reads SERVED_UI too
 // (skips its webServer, points baseURL at :8181).
 const servedUI = env.SERVED_UI === '1';
-// Docker matrix drives the full local LoQE read/write flow against seaweed (STS +
-// wildcard CORS make it browser-usable, no AWS). Turn seaweed deep flows on here so
-// storage-backends.ts flips deepFlows for the seaweedfs backend — the npm matrix,
+// Docker matrix drives the full local LoQE read/write flow against Silo (STS +
+// wildcard CORS make it browser-usable, no AWS). Turn its deep flows on here so
+// storage-backends.ts flips deepFlows for the local S3 backend — the npm matrix,
 // which never sets this, keeps its historical create+verify behavior.
 if (servedUI && !env.S3_LOCAL_DEEP) env.S3_LOCAL_DEEP = '1';
 // Pinned pushed image under test; override with LK_IMAGE_DOCKER in .env.

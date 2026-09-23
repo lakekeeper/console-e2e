@@ -11,7 +11,7 @@ browser**. Read [README.md](README.md) first for the user-facing overview.
   → up infra → `migrate` → serve lakekeeper → poll `/health` → `runPlaywright()` →
   cross-browser passes → archive + rebuild dashboard → teardown. Also runs the
   component **unit tests** once up front (`runUnitTests()`).
-- **`docker-compose.yml`** — Postgres, Keycloak (`:30080`), OpenFGA, SeaweedFS
+- **`docker-compose.yml`** — Postgres, Keycloak (`:30080`), OpenFGA, Silo
   (`:8333`) + bucket-init, Lakekeeper (`:8181`). Image + `modes/<mode>.env` swapped
   per combo. Postgres/OpenFGA publish **no host ports** (avoid clashes).
 - **`modes/<mode>.env`** — backend `LAKEKEEPER__*` (container) + `VITE_*` (build-time
@@ -54,7 +54,7 @@ browser**. Read [README.md](README.md) first for the user-facing overview.
 - **AWS LoQE writes need an STS-enabled warehouse** (`sts-enabled` + `sts-role-arn` +
   key-prefix). Plain access-key creds write to the bucket root and 404. A green
   `CREATE` is not proof — assert the read-back.
-- **Split-horizon SeaweedFS** — single host-LAN-IP endpoint for browser + container.
+- **Split-horizon Silo** — single host-LAN-IP endpoint for browser + container.
 - **CORS error wording is browser-specific** — chromium says "…CORS/404", firefox says
   "Cannot read N bytes from memory buffer". `console-components` LoQEEngine maps both
   to a friendly message; the CORS test asserts the friendly message (don't tighten to

@@ -117,7 +117,7 @@ All recipes are namespaced `test-`:
 | `just test-mode <mode>` | one mode, both apps |
 | `just test-matrix` | **the full matrix** (both apps × all modes × browsers) |
 | `just test-matrix-chrome` | the full matrix, **chromium only** |
-| `just test-matrix-docker` | **docker-image matrix** — the pushed lakekeeper-plus image's *embedded* UI, all modes, seaweedfs-only ([details](#testing-the-shipped-docker-image)) |
+| `just test-matrix-docker` | **docker-image matrix** — the pushed lakekeeper-plus image's *embedded* UI, all modes, silo-only ([details](#testing-the-shipped-docker-image)) |
 | `just test-docker <mode>` | one mode against the pushed docker image |
 | `just test-unit` | component-repo Vitest unit tests (standalone) |
 | `just test-coverage` | e2e code coverage on the chromium combos (see [Coverage](#coverage)) |
@@ -160,8 +160,8 @@ same origin as its API. This validates the release artifact end-to-end, not loca
 - **Image**: `LK_IMAGE_DOCKER` in `.env` (pinned tag; arm64 for Apple-Silicon podman).
 - **No npm server**: `SERVED_UI=1` points Playwright's `baseURL` at `:8181`; the pre-built
   image is configured via `LAKEKEEPER__UI__*` (no `VITE_*`). Needs the license key.
-- **SeaweedFS only, fully local (no AWS)**: cloud backends are disabled; the local
-  SeaweedFS warehouse vends short-lived creds via **STS** so the in-browser LoQE
+- **Silo only, fully local (no AWS)**: cloud backends are disabled; the local
+  Silo warehouse vends short-lived creds via **STS** so the in-browser LoQE
   write/read round-trip works. `S3_LOCAL_DEEP=1` turns on the deep flows (LoQE +
   access-control) for it; wildcard bucket CORS makes the `:3002` CORS-negative test moot.
 - **Split-horizon**: the warehouse endpoint is the **host LAN IP** (`run.mjs` auto-detects
@@ -203,7 +203,7 @@ backend only runs when its creds are present. ⚠️ Use throwaway, least-privil
 The warehouse + LoQE journeys run **per enabled backend** (see
 [`specs/_data/storage-backends.ts`](specs/_data/storage-backends.ts)):
 
-- **SeaweedFS** — a local S3, started by the stack; always on. Reachable from both the
+- **Silo** — a local S3 (a maintained MinIO fork), started by the stack; always on. Reachable from both the
   browser and the lakekeeper container via the host LAN IP (auto-detected by
   `run.mjs` to solve the [split-horizon](#split-horizon) problem). Create+verify only
   (no deep browser flows by default).
@@ -239,7 +239,7 @@ broad/integration-level; for line coverage of the library use the Vitest unit te
 - **`run.mjs`** — the orchestrator. For each `app × mode`: `compose down -v` →
   bring up infra → migrate → serve lakekeeper → wait for health → run Playwright →
   (cross-browser passes) → archive + rebuild the dashboard → tear down.
-- **`docker-compose.yml`** — Postgres, Keycloak, OpenFGA, SeaweedFS (+ bucket-init),
+- **`docker-compose.yml`** — Postgres, Keycloak, OpenFGA, Silo (+ bucket-init),
   and Lakekeeper. The Lakekeeper image and `modes/<mode>.env` are swapped per combo.
 - **`modes/<mode>.env`** — the per-mode knobs: backend `LAKEKEEPER__*` (container) +
   `VITE_*` (build-time app flags, e.g. `VITE_ENABLE_AUTHENTICATION`).
@@ -267,7 +267,7 @@ the *tree* loads on any origin — but *data* reads need bucket CORS. The `stora
 test demonstrates `:3001` works / `:3002` is blocked.
 
 #### Split-horizon
-Local SeaweedFS must be reachable from **both** the browser (host) and the lakekeeper
+Local Silo must be reachable from **both** the browser (host) and the lakekeeper
 container, which see different hostnames. `run.mjs` auto-detects the host LAN IP and
 uses it as the single endpoint so the SigV4 signature matches on both sides.
 

@@ -23,13 +23,14 @@ async function openLayoutOptions(scope: Locator) {
 /** Client access is one exclusive radio group now ("Remote signing" / "Vended
  *  credentials (STS)" / "None"), not an "Enable STS" switch beside remote
  *  signing. Picking STS reveals the role-ARN field. */
-async function chooseVendedCredentials(scope: Locator, roleArn: string) {
+async function chooseVendedCredentials(scope: Locator, roleArn?: string) {
   const radio = scope.getByRole('radio', { name: /Vended credentials/i }).first();
   if (await radio.isVisible().catch(() => false)) {
     await radio.check().catch(() => radio.click().catch(() => {}));
   } else {
     await scope.getByText(/Vended credentials \(STS\)/i).first().click().catch(() => {});
   }
+  if (!roleArn) return;
   const arn = scope.getByLabel(/STS role ARN/i).filter({ visible: true }).first();
   await arn.waitFor({ timeout: 5000 }).catch(() => {});
   await fillIfPresent(scope, /STS role ARN/i, roleArn);
@@ -38,7 +39,7 @@ async function chooseVendedCredentials(scope: Locator, roleArn: string) {
 /**
  * Storage backends for warehouse tests. Each backend selects its provider in the
  * rail of the "Add Warehouse" modal and fills that provider's form. S3-compatible
- * (SeaweedFS) is always available locally; the cloud backends activate only when
+ * (Silo) is always available locally; the cloud backends activate only when
  * their credentials are present in the environment — otherwise skipped, the same
  * skip-if-absent pattern as the cedar mode.
  *
@@ -58,7 +59,7 @@ export interface StorageBackend {
   /**
    * Whether deep flows (open detail -> namespace -> table) work. They need the
    * storage endpoint reachable FROM THE BROWSER (the detail page's storage
-   * explorer fetches it). Cloud (AWS/R2/...) is browser-reachable; local SeaweedFS
+   * explorer fetches it). Cloud (AWS/R2/...) is browser-reachable; local Silo
    * sends no CORS headers, so it's create+verify only. Default true.
    */
   deepFlows?: boolean;
@@ -69,23 +70,24 @@ const has = (...keys: string[]) => keys.every((k) => !!env[k]);
 // Cloud backends: enabled only when their creds exist AND we're not in served-UI
 // (docker image) mode. Served-UI tests the pushed image's embedded UI at :8181,
 // but the cloud buckets' CORS only allows the :3001 dev origin - so restrict the
-// docker matrix to local SeaweedFS (wildcard CORS). See `just test-matrix-docker`.
+// docker matrix to local Silo (wildcard CORS). See `just test-matrix-docker`.
 const cloud = (...keys: string[]) => env.SERVED_UI !== '1' && has(...keys);
 
 async function fillS3Compat(scope: Locator) {
-  // Local SeaweedFS (S3-compatible). The endpoint must be reachable from BOTH the
-  // browser and the lakekeeper container, so default to the host LAN IP (run.mjs
-  // injects S3_LOCAL_ENDPOINT); seaweedfs:8333 only works server-side.
+  // Local Silo, a maintained MinIO fork (S3-compatible). The endpoint must be
+  // reachable from BOTH the browser and the lakekeeper container, so default to
+  // the host LAN IP (run.mjs injects S3_LOCAL_ENDPOINT); silo:9000 is
+  // server-side only.
   // Field names changed in 0.23: "Bucket Name" -> "Bucket *", "Bucket Region" ->
   // "Region", and Endpoint moved out of the advanced panel (it is required here).
   await fillIfPresent(scope, /^Bucket( \*)?$/i, env.S3_LOCAL_BUCKET || 'lakekeeper-test');
   await fillIfPresent(scope, /^Region( \*)?$/i, env.S3_LOCAL_REGION || 'us-east-1');
-  await fillIfPresent(scope, /^Endpoint( \*)?$/i, env.S3_LOCAL_ENDPOINT || 'http://seaweedfs:8333');
+  await fillIfPresent(scope, /^Endpoint( \*)?$/i, env.S3_LOCAL_ENDPOINT || 'http://silo:9000');
   await fillIfPresent(scope, /Access Key ID/i, env.S3_LOCAL_ACCESS_KEY || 'lakekeeper');
   await fillIfPresent(scope, /Secret Access Key/i, env.S3_LOCAL_SECRET_KEY || 'lakekeeper-secret');
 
   // Path-style access lives under the collapsed "Layout & options" accordion —
-  // SeaweedFS needs it or every request resolves to a virtual-host URL.
+  // Silo needs it or every request resolves to a virtual-host URL.
   await openLayoutOptions(scope);
   const pathStyle = scope.getByLabel(/path[- ]style/i).filter({ visible: true }).first();
   if (await pathStyle.isVisible().catch(() => false)) {
@@ -94,19 +96,18 @@ async function fillS3Compat(scope: Locator) {
 
   // Deep flows (docker matrix, S3_LOCAL_DEEP=1) need STS-vended creds so the browser
   // LoQE write succeeds — plain access-key vending 404s the write (same failure mode
-  // as AWS). SeaweedFS AssumeRole (LakekeeperVendedRole in seaweedfs/s3.json) vends
-  // short-lived creds. The npm matrix leaves STS off (create+verify only).
+  // as AWS). Silo serves AssumeRole from the same endpoint and derives the session
+  // from the calling key, so there is no role to name — unlike SeaweedFS, which
+  // needed a role, a trust policy and a signing key in s3.json. Pass
+  // S3_LOCAL_STS_ROLE_ARN only if a deployment actually wants one.
   if (env.S3_LOCAL_DEEP === '1') {
-    await chooseVendedCredentials(
-      scope,
-      env.S3_LOCAL_STS_ROLE_ARN || 'arn:aws:iam::000000000000:role/LakekeeperVendedRole',
-    );
+    await chooseVendedCredentials(scope, env.S3_LOCAL_STS_ROLE_ARN);
   }
 }
 
 export const STORAGE_BACKENDS: StorageBackend[] = [
   {
-    key: 's3 (seaweedfs)',
+    key: 's3 (silo)',
     tab: /S3 Compatible|S3.?Compat/i,
     // On by default (the always-available local backend); run.mjs injects a host
     // LAN-IP endpoint so it's reachable from both browser and container. Opt out

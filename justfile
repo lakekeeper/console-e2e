@@ -15,7 +15,7 @@ test-matrix-chrome:
     NO_CROSS_BROWSER=1 node run.mjs
 
 # DOCKER IMAGE matrix — tests the pushed lakekeeper-plus image's EMBEDDED UI
-# (served at :8181/ui, no local npm), all modes, seaweedfs-only, chromium.
+# (served at :8181/ui, no local npm), all modes, silo-only, chromium.
 # Image + license come from .env (LK_IMAGE_DOCKER, LAKEKEEPER__LICENSE__KEY).
 test-matrix-docker:
     SERVED_UI=1 NO_CROSS_BROWSER=1 node run.mjs

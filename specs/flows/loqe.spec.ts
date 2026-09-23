@@ -30,7 +30,7 @@ test.describe('loqe @authn @authz @cedar', () => {
     // PROVE the browser origin (the video has no address bar). The AWS bucket CORS
     // is pinned to http://localhost:3001 — if vite bumped the port, the write fails.
     // In served-UI (docker) the app is the image's embedded console at :8181 and the
-    // seaweed bucket has wildcard CORS, so the allowed origin is the UI URL instead.
+    // silo bucket has wildcard CORS, so the allowed origin is the UI URL instead.
     const origin = new URL(page.url()).origin;
     console.log(`### LoQE page origin: ${origin}`);
     const expectedOrigin =

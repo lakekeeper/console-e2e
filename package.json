@@ -16,7 +16,7 @@
     "playwright.config.ts",
     "docker-compose.yml",
     "modes",
-    "seaweedfs",
+    "silo",
     "specs",
     "justfile",
     ".env.example",

@@ -7,7 +7,7 @@ import { createWarehouse, openWarehouse, addNamespace, warehouseName, refreshWar
 // Each step shows as a numbered entry (with its own screenshot) in the HTML report.
 // (Creating/querying a TABLE lives in flows/loqe.spec.ts, not here.)
 //
-// One journey PER enabled storage backend (AWS always; SeaweedFS when
+// One journey PER enabled storage backend (AWS always; Silo when
 // S3_LOCAL_ENABLE=1; R2/ADLS/OneLake/GCS when their creds are set).
 test.describe('warehouse lifecycle @authn @authz @cedar', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
@@ -37,7 +37,7 @@ test.describe('warehouse lifecycle @authn @authz @cedar', () => {
       });
 
       // Deep flows need the detail page's storage explorer to reach the endpoint
-      // from the browser — only for browser-reachable backends (not local SeaweedFS).
+      // from the browser — only for browser-reachable backends (not the local Silo journey unless S3_LOCAL_DEEP=1).
       if (backend.deepFlows === false) return;
 
       await test.step('3 · open warehouse + create namespace', async () => {
