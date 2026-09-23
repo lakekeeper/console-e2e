@@ -58,6 +58,15 @@ if (!env.S3_LOCAL_ENDPOINT) {
 // far less likely to be taken than 10080.
 env.S3_BADPORT_HOST_PORT = env.S3_BADPORT_HOST_PORT || '6697';
 
+/** First port in the list nothing is listening on, else the first entry. */
+function firstFreePort(candidates) {
+  for (const p of candidates) {
+    const r = spawnSync('sh', ['-c', `lsof -nP -iTCP:${p} -sTCP:LISTEN >/dev/null 2>&1`]);
+    if (r.status !== 0) return p;
+  }
+  return candidates[0];
+}
+
 const ALL_APPS = ['console', 'console-plus'];
 const ALL_MODES = ['noauth', 'authn', 'authz', 'cedar'];
 // Per-app supported modes. Cedar is a PREMIUM authorizer → console-plus only;
@@ -102,7 +111,13 @@ const keep = has('--keep');
 const upOnly = has('--up'); // bring the stack up and leave it running (for test-ui)
 
 const HEALTH = 'http://localhost:8181/health';
-const KC_DISCOVERY = 'http://localhost:30080/realms/iceberg/.well-known/openid-configuration';
+// Keycloak's host port, chosen the same way as the S3 ports and for the same
+// reason: a dev-stack Keycloak already owning :30080 made `compose up` die on
+// the bind, which left bucket-init unstarted, which made every warehouse create
+// fail with NoSuchBucket — a storage-shaped symptom two layers from the cause.
+const KC_HOST_PORT = env.KC_HOST_PORT || firstFreePort([30080, 30081, 30082, 30083, 30084]);
+env.KC_HOST_PORT = String(KC_HOST_PORT);
+const KC_DISCOVERY = `http://localhost:${KC_HOST_PORT}/realms/iceberg/.well-known/openid-configuration`;
 
 // Rebuild DASHBOARD.html. Pass {RUN_IN_PROGRESS:'1', RUN_CURRENT} while a run is
 // active so the page shows an "in progress" banner and refreshes fast; omit at
@@ -290,9 +305,33 @@ for (const app of apps) {
       // clean slate
       compose(['down', '-v', '--remove-orphans'], stackEnv);
 
+      // The mode files hardcode :30080 for keycloak in four places (two
+      // backend, two frontend). When the port moves they all have to move
+      // together, so write a generated copy for this run and point compose and
+      // playwright at that rather than editing the checked-in files.
+      const genName = `.generated-${mode}.env`;
+      const srcEnv = fs.readFileSync(path.join(dir, 'modes', `${mode}.env`), 'utf8');
+      fs.writeFileSync(
+        path.join(dir, 'modes', genName),
+        srcEnv.replaceAll(':30080/', `:${KC_HOST_PORT}/`),
+      );
+      stackEnv.MODE_ENV_FILE = genName;
+      env.MODE_ENV_FILE = genName;
+
       // infra (postgres readiness is gated by the compose healthcheck +
       // migrate's depends_on; keycloak we poll explicitly below)
-      compose(['up', '-d', ...SERVICES[mode]], stackEnv);
+      // Abort on a failed `up`. Compose stops at the first container it cannot
+      // start, so a port clash leaves the rest of the stack uncreated — and the
+      // suite then runs to completion against a half-built stack and reports a
+      // screenful of test failures that have nothing to do with the tests.
+      const up = compose(['up', '-d', ...SERVICES[mode]], stackEnv);
+      if (up.status !== 0) {
+        throw new Error(
+          `compose up failed for ${mode} (exit ${up.status}). A host port is usually ` +
+            `already taken — check :${KC_HOST_PORT} (keycloak), :${env.S3_LOCAL_HOST_PORT} ` +
+            `and :${env.S3_BADPORT_HOST_PORT} (silo), :8181 (lakekeeper).`,
+        );
+      }
       if (SERVICES[mode].includes('keycloak')) {
         await waitFor('keycloak realm', KC_DISCOVERY, { timeoutMs: 240_000 });
       }

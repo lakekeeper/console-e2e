@@ -97,9 +97,8 @@ async function fillS3Compat(scope: Locator) {
   // Deep flows (docker matrix, S3_LOCAL_DEEP=1) need STS-vended creds so the browser
   // LoQE write succeeds — plain access-key vending 404s the write (same failure mode
   // as AWS). Silo serves AssumeRole from the same endpoint and derives the session
-  // from the calling key, so there is no role to name — unlike SeaweedFS, which
-  // needed a role, a trust policy and a signing key in s3.json. Pass
-  // S3_LOCAL_STS_ROLE_ARN only if a deployment actually wants one.
+  // from the calling key, so there is no role to name. Pass S3_LOCAL_STS_ROLE_ARN
+  // only if a deployment actually wants one.
   if (env.S3_LOCAL_DEEP === '1') {
     await chooseVendedCredentials(scope, env.S3_LOCAL_STS_ROLE_ARN);
   }

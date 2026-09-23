@@ -11,7 +11,9 @@
 x-lk-common: &lk-common
   image: ${LK_IMAGE:-quay.io/lakekeeper/catalog:latest-main}
   env_file:
-    - ./modes/${TEST_MODE:-authn}.env
+    # run.mjs writes .generated-<mode>.env with the chosen keycloak host port
+    # substituted; MODE_ENV_FILE names it. Falls back to the checked-in file.
+    - ./modes/${MODE_ENV_FILE:-${TEST_MODE:-authn}.env}
   environment:
     # Injected from .env.secret by run.mjs (only the cedar mode needs it).
     LAKEKEEPER__LICENSE__KEY: ${LAKEKEEPER__LICENSE__KEY:-}
@@ -48,9 +50,8 @@ services:
   # the browser/LoQE use the host LAN IP that run.mjs injects.
   #
   # Silo serves the S3 API and the STS AssumeRole endpoint from one process with
-  # no IAM config — the warehouse just points `sts-endpoint` at the same URL and
-  # needs no role ARN. That is why this replaced SeaweedFS, whose AssumeRole
-  # needed a hand-written s3.json with a role, a trust policy and a signing key.
+  # no IAM config — the warehouse points `sts-endpoint` at the same URL and needs
+  # no role ARN, so there is no IAM file to keep in sync.
   # Image and settings follow lakekeeper's own examples/minimal compose.
   silo:
     image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
@@ -108,7 +109,7 @@ services:
     volumes:
       - ${KEYCLOAK_REALM_FILE}:/opt/keycloak/data/import/realm.json:ro
     ports:
-      - "30080:8080"
+      - "${KC_HOST_PORT:-30080}:8080"
 
   # One-shot DB/authz migration. Run via `docker compose run --rm migrate`.
   migrate:

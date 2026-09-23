@@ -53,7 +53,12 @@ const appDir =
 
 // Pull the VITE_* vars for this mode and forward them to the dev server, where
 // they override the app's own .env via Vite's process.env precedence.
-const modeEnv = dotenv.parse(fs.readFileSync(path.resolve(dir, `modes/${mode}.env`)));
+// run.mjs writes a generated copy with the chosen keycloak host port
+// substituted and names it in MODE_ENV_FILE; the frontend's VITE_IDP_AUTHORITY
+// has to agree with the port compose published, or login silently targets a
+// keycloak that is not there.
+const modeEnvFile = process.env.MODE_ENV_FILE || `${mode}.env`;
+const modeEnv = dotenv.parse(fs.readFileSync(path.resolve(dir, 'modes', modeEnvFile)));
 const viteEnv: Record<string, string> = {};
 for (const [k, v] of Object.entries(modeEnv)) {
   if (k.startsWith('VITE_')) viteEnv[k] = v;

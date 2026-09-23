@@ -16,3 +16,4 @@ monocart-report/
 loqe-debug.png
 TEST-CATALOG.md
 .raw/
+modes/.generated-*.env
