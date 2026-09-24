@@ -162,6 +162,37 @@ const compose = (composeArgs, extraEnv = {}) =>
     },
   );
 
+// The natively-run catalog (LK_BIN), tracked at module scope so resetBackend
+// can cycle it: after the reset its database is gone, so it has to be restarted
+// rather than left holding connections to a postgres that no longer exists.
+let lkProc = null;
+let lkGenName = null;
+let lkImageLabel = '';
+
+function startNativeLakekeeper(genName, lkImage) {
+  lkGenName = genName;
+  lkImageLabel = lkImage;
+  const hostEnv = {};
+  for (const [k, v] of Object.entries(
+    dotenv.parse(fs.readFileSync(path.join(dir, 'modes', genName), 'utf8')),
+  )) {
+    hostEnv[k] = String(v)
+      .replace('@postgres:5432', `@localhost:${env.PG_HOST_PORT}`)
+      .replace('http://openfga:8081', `http://localhost:${env.FGA_HOST_PORT}`)
+      .replace('host.docker.internal', 'localhost');
+  }
+  console.log(`▶ lakekeeper from ${LK_BIN} (native, not the ${lkImage} image)`);
+  lkProc = spawn(LK_BIN, ['serve'], { stdio: 'inherit', env: { ...env, ...hostEnv } });
+  lkProc.on('exit', (c) => {
+    if (c !== 0 && c !== null) console.error(`✘ lakekeeper binary exited ${c}`);
+  });
+}
+
+function stopNativeLakekeeper() {
+  if (lkProc && !lkProc.killed) lkProc.kill('SIGTERM');
+  lkProc = null;
+}
+
 /**
  * Wipe the backend BETWEEN browser passes, leaving keycloak up.
  *
@@ -177,13 +208,20 @@ const compose = (composeArgs, extraEnv = {}) =>
  */
 async function resetBackend(stackEnv, mode) {
   const stateful = SERVICES[mode].filter((s) => s !== 'keycloak');
+  stopNativeLakekeeper(); // its database is about to be recreated
   process.stdout.write('♻️  resetting backend (keycloak stays up) … ');
+  // The server is unbootstrapped after this, so drop the bootstrap marker the
+  // fixtures use — otherwise the next pass assumes it is still done.
+  for (const f of [`lk-e2e-bootstrap-${mode}`, `lk-e2e-bootstrap-${mode}.done`]) {
+    fs.rmSync(path.join(os.tmpdir(), f), { force: true });
+  }
   compose(['rm', '-sf', 'lakekeeper', ...stateful], stackEnv);
   const up = compose(['up', '-d', ...stateful], stackEnv);
   if (up.status !== 0) throw new Error('reset: compose up failed');
   const mig = compose(['run', '--rm', 'migrate'], stackEnv);
   if (mig.status !== 0) throw new Error('reset: migrate failed');
-  compose(['up', '-d', 'lakekeeper'], stackEnv);
+  if (LK_BIN) startNativeLakekeeper(lkGenName, lkImageLabel);
+  else compose(['up', '-d', 'lakekeeper'], stackEnv);
   await waitFor('lakekeeper', HEALTH, { timeoutMs: 120_000 });
 }
 
@@ -365,8 +403,6 @@ for (const app of apps) {
     }
 
     // Declared out here so the finally block can stop it.
-    let lkProc = null;
-
     try {
       // clean slate
       compose(['down', '-v', '--remove-orphans'], stackEnv);
@@ -409,23 +445,7 @@ for (const app of apps) {
         // The mode file addresses everything by compose service name, which
         // means nothing on the host: rewrite each to the published port. The
         // browser-facing URLs already say localhost and are left alone.
-        const hostEnv = {};
-        for (const [k, v] of Object.entries(dotenv.parse(
-          fs.readFileSync(path.join(dir, 'modes', genName), 'utf8'),
-        ))) {
-          hostEnv[k] = String(v)
-            .replace('@postgres:5432', `@localhost:${env.PG_HOST_PORT}`)
-            .replace('http://openfga:8081', `http://localhost:${env.FGA_HOST_PORT}`)
-            .replace('host.docker.internal', 'localhost');
-        }
-        console.log(`▶ lakekeeper from ${LK_BIN} (native, not the ${lkImage} image)`);
-        lkProc = spawn(LK_BIN, ['serve'], {
-          stdio: 'inherit',
-          env: { ...env, ...hostEnv },
-        });
-        lkProc.on('exit', (c) => {
-          if (c !== 0 && c !== null) console.error(`✘ lakekeeper binary exited ${c}`);
-        });
+        startNativeLakekeeper(genName, lkImage);
       } else {
         compose(['up', '-d', 'lakekeeper'], stackEnv);
       }
@@ -480,7 +500,7 @@ for (const app of apps) {
       results.push({ app, mode, code: 1, note: e.message });
     } finally {
       const isLast = app === apps.at(-1) && mode === modes.at(-1);
-      if (lkProc && !lkProc.killed) lkProc.kill('SIGTERM');
+      stopNativeLakekeeper();
       if (!(keep && isLast)) compose(['down', '-v', '--remove-orphans'], stackEnv);
     }
   }

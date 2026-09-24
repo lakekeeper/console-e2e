@@ -66,10 +66,17 @@ for (const [k, v] of Object.entries(modeEnv)) {
 
 export default defineConfig({
   testDir: './specs',
-  fullyParallel: false, // one backend on a fixed port → keep app state deterministic
+  // Parallel ACROSS files, serial WITHIN one: several specs tell an ordered
+  // story inside a file (access-control grants then reads, then revokes in
+  // afterEach), and per-test projects isolate files from each other but not a
+  // file from itself.
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.E2E_RETRIES ? Number(process.env.E2E_RETRIES) : 2, // absorb OIDC/token races
-  workers: 1,
+  // Opt-in: E2E_WORKERS=3. Not per-CPU — the limit is memory, since each LoQE
+  // spec loads DuckDB-WASM into its own browser on a 9GB VM. Default stays 1 so
+  // the serial baseline is what runs unless asked otherwise.
+  workers: Number(process.env.E2E_WORKERS || 1),
   expect: { timeout: 10_000 },
   // Fixture setup counts against the test timeout, and a spec's own
   // test.setTimeout() runs too late to cover it — the per-test project the

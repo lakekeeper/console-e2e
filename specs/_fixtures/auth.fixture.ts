@@ -1,4 +1,7 @@
 import { test as base, expect, Page } from '@playwright/test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { addCoverageReport } from 'monocart-reporter';
 import { login, isAuthMode, TEST_USER } from '../_utils/auth';
 import { projectNameFor, useIsolatedProject, currentProject } from '../_utils/project';
@@ -27,6 +30,38 @@ type AuthFixtures = {
  * Stepper: 1) Global Admin → Next, 2) EULA (must scroll to bottom) → Next,
  * 3) Submit → Accept. Works for both auth and noauth modes (fresh DB per run).
  */
+/**
+ * Bootstrap runs in EVERY test's fixture, which is harmless with one worker —
+ * the first test does it and the rest see the server already bootstrapped. In
+ * parallel it is a race: N workers would drive the stepper at once against an
+ * unbootstrapped server. This lock lets exactly one do it while the others wait
+ * for the marker, then carry on as normal.
+ */
+const BOOTSTRAP_LOCK = path.join(os.tmpdir(), `lk-e2e-bootstrap-${process.env.TEST_MODE || 'authn'}`);
+
+async function withBootstrapLock(fn: () => Promise<void>) {
+  const done = `${BOOTSTRAP_LOCK}.done`;
+  if (fs.existsSync(done)) return fn(); // already bootstrapped: cheap re-check
+  for (let i = 0; i < 120; i++) {
+    try {
+      // Atomic: only one worker can create it exclusively.
+      fs.writeFileSync(BOOTSTRAP_LOCK, String(process.pid), { flag: 'wx' });
+      try {
+        await fn();
+        fs.writeFileSync(done, '1');
+      } finally {
+        fs.rmSync(BOOTSTRAP_LOCK, { force: true });
+      }
+      return;
+    } catch (e: any) {
+      if (e?.code !== 'EEXIST') throw e;
+      if (fs.existsSync(done)) return fn();
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  return fn(); // lock holder died; just try it
+}
+
 async function ensureBootstrapped(page: Page) {
   if (!page.url().includes('/bootstrap')) {
     await page.goto('/ui/bootstrap').catch(() => {});
@@ -107,7 +142,7 @@ export const test = base.extend<AuthFixtures & AuthOptions>({
   // E2E_SHARED_PROJECT=1 for a spec that deliberately needs the default project.
   bootstrappedPage: async ({ page, browserName, isolatedProject }, use, testInfo) => {
     await login(page, TEST_USER);
-    await ensureBootstrapped(page);
+    await withBootstrapLock(() => ensureBootstrapped(page));
     if (isolatedProject && process.env.E2E_SHARED_PROJECT !== '1') {
       const name = projectNameFor(testInfo.title, browserName);
       await useIsolatedProject(page, name);
