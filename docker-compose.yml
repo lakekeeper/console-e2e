@@ -99,7 +99,8 @@ services:
       - -c
       - |
         mc alias set local http://silo:9000 lakekeeper lakekeeper-secret &&
-        mc mb --ignore-existing local/lakekeeper-test
+        mc mb --ignore-existing local/lakekeeper-test &&
+        mc mb --ignore-existing local/lakekeeper-badport
     restart: "no"
 
   keycloak:

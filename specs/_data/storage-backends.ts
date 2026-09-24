@@ -23,7 +23,7 @@ async function openLayoutOptions(scope: Locator) {
 /** Client access is one exclusive radio group now ("Remote signing" / "Vended
  *  credentials (STS)" / "None"), not an "Enable STS" switch beside remote
  *  signing. Picking STS reveals the role-ARN field. */
-async function chooseVendedCredentials(scope: Locator, roleArn?: string) {
+export async function chooseVendedCredentials(scope: Locator, roleArn?: string) {
   const radio = scope.getByRole('radio', { name: /Vended credentials/i }).first();
   if (await radio.isVisible().catch(() => false)) {
     await radio.check().catch(() => radio.click().catch(() => {}));

@@ -337,3 +337,11 @@ specs/
   _utils/               login, warehouse, loqe, permissions, cedar, app helpers
   <area>/*.spec.ts      the journeys
 ```
+
+
+### Result freshness
+
+A run clears every stored result first, so the dashboard never shows
+"IN PROGRESS" beside columns from an earlier run. Pass `--keep-results`
+(or `KEEP_RESULTS=1`) to preserve combos the run will not touch — the case
+where the npm matrix and the docker matrix are meant to sit side by side.

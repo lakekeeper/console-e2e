@@ -1,7 +1,9 @@
 import { test, expect } from '../_fixtures/auth.fixture';
 import { createWarehouse, openWarehouse, addNamespace } from '../_utils/warehouse';
+import { openLoqeAndAttach, createTableViaLoqe } from '../_utils/loqe';
 import type { Locator } from '@playwright/test';
 import type { StorageBackend } from '../_data/storage-backends';
+import { chooseVendedCredentials } from '../_data/storage-backends';
 
 // Local copies of the two form helpers: storage-backends.ts keeps them private,
 // and this spec needs only these two — not worth widening that module's surface.
@@ -49,9 +51,14 @@ test.describe('storage reachability @authn', () => {
     tab: /S3 Compatible|S3.?Compat/i,
     enabled: env.S3_LOCAL_ENABLE !== '0',
     fill: async (scope) => {
-      await fillIfPresent(scope, /^Bucket( \*)?$/i, env.S3_LOCAL_BUCKET || 'lakekeeper-test');
+      // Its OWN bucket, not a prefix inside the shared one: demo-silo is created
+      // with no key-prefix, so it owns the whole bucket root and Lakekeeper
+      // rejects any nested location as "used by another warehouse".
+      await fillIfPresent(scope, /^Bucket( \*)?$/i, env.S3_BADPORT_BUCKET || 'lakekeeper-badport');
       await fillIfPresent(scope, /^Region( \*)?$/i, env.S3_LOCAL_REGION || 'us-east-1');
-      await fillIfPresent(scope, /^Endpoint( \*)?$/i, badEndpoint);
+      // Working endpoint at create time; the test moves it to badEndpoint
+      // after data is written (see the step below).
+      await fillIfPresent(scope, /^Endpoint( \*)?$/i, env.S3_LOCAL_ENDPOINT || 'http://silo:9000');
       await fillIfPresent(scope, /Access Key ID/i, env.S3_LOCAL_ACCESS_KEY || 'lakekeeper');
       await fillIfPresent(
         scope,
@@ -59,6 +66,7 @@ test.describe('storage reachability @authn', () => {
         env.S3_LOCAL_SECRET_KEY || 'lakekeeper-secret',
       );
       await openLayoutOptions(scope);
+
       const pathStyle = scope
         .getByLabel(/path[- ]style/i)
         .filter({ visible: true })
@@ -66,6 +74,11 @@ test.describe('storage reachability @authn', () => {
       if (await pathStyle.isVisible().catch(() => false)) {
         await pathStyle.check().catch(() => pathStyle.click().catch(() => {}));
       }
+      // The storage explorer reads the bucket FROM THE BROWSER, which needs
+      // vended credentials — without them it stops at "No S3 access key in
+      // vended credentials" and never reaches the blocked-port path this spec
+      // is about. Silo vends via AssumeRole off the calling key, no role ARN.
+      await chooseVendedCredentials(scope, env.S3_LOCAL_STS_ROLE_ARN);
     },
   };
 
@@ -80,39 +93,54 @@ test.describe('storage reachability @authn', () => {
     const ns = 'badport_ns';
     await addNamespace(page, ns);
 
-    // The table is created through the catalog API, not the browser: a staged
-    // create would need the browser to write metadata, and writing is exactly
-    // what this warehouse cannot do. Lakekeeper writes the metadata itself
-    // server-side, which is all the Files/Preview tabs need to attempt a read.
-    const token = await page.evaluate(() => {
-      for (const store of [sessionStorage, localStorage])
-        for (const k of Object.keys(store))
-          if (k.startsWith('oidc.user')) {
-            try {
-              const v = JSON.parse(store.getItem(k) || '{}');
-              if (v?.access_token) return v.access_token as string;
-            } catch {
-              /* not the entry we want */
-            }
-          }
-      return '';
+    // The table needs actual DATA, not just a schema: with no rows the preview
+    // short-circuits to "No rows yet ... nothing has been written to it yet"
+    // and never attempts a storage read, so it can never reach the
+    // blocked-port verdict this spec is about.
+    //
+    // Which means the warehouse cannot start out blocked — writing uses the
+    // same endpoint the browser is meant to be unable to reach. So: create it
+    // pointing at the WORKING endpoint, write through LoQE, then move the
+    // endpoint to the blocked port. `lockLocation` only freezes Bucket and
+    // Location, so Endpoint stays editable after create.
+    await openLoqeAndAttach(page, wh, ns);
+    await createTableViaLoqe(page, wh, ns, 'badport_tbl');
+
+    await test.step('move the endpoint to the browser-blocked port', async () => {
+      await openWarehouse(page, wh);
+      await page.locator('button:has(.mdi-cog)').first().click();
+      await page.getByText('Warehouse settings', { exact: true }).click();
+      const dialog = page
+        .locator('.v-overlay__content')
+        .filter({ hasText: /Warehouse settings|STORAGE PROVIDER/i })
+        .last();
+      await expect(dialog).toBeVisible({ timeout: 15000 });
+      await dialog.getByRole('tab', { name: backend.tab }).click();
+      const endpoint = dialog
+        .getByLabel(/^Endpoint( \*)?$/i)
+        .filter({ visible: true })
+        .first();
+      await expect(endpoint).toBeVisible({ timeout: 15000 });
+      await endpoint.fill(badEndpoint);
+      // Credentials are write-only server-side, so the stored ones are not
+      // replayed into the form — and "Update profile" re-runs storage
+      // validation, which without them fails as Access Denied / no STS
+      // identity. Resend them with the profile.
+      await dialog
+        .getByLabel(/Access Key ID/i)
+        .filter({ visible: true })
+        .first()
+        .fill(env.S3_LOCAL_ACCESS_KEY || 'lakekeeper');
+      await dialog
+        .getByLabel(/Secret Access Key/i)
+        .filter({ visible: true })
+        .first()
+        .fill(env.S3_LOCAL_SECRET_KEY || 'lakekeeper-secret');
+      const updateProfile = dialog.getByRole('button', { name: /^update profile$/i });
+      await expect(updateProfile).toBeEnabled({ timeout: 15000 });
+      await updateProfile.click();
+      await expect(dialog).toBeHidden({ timeout: 60000 });
     });
-    const api = process.env.LK_API_URL || 'http://localhost:8181';
-    const created = await page.request.post(
-      `${api}/catalog/v1/${encodeURIComponent(wh)}/namespaces/${ns}/tables`,
-      {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        data: {
-          name: 'badport_tbl',
-          schema: {
-            type: 'struct',
-            'schema-id': 0,
-            fields: [{ id: 1, name: 'val', required: false, type: 'string' }],
-          },
-        },
-      },
-    );
-    expect(created.ok(), `table create failed: ${await created.text()}`).toBeTruthy();
 
     // Files: the storage explorer lists the table prefix directly from the browser.
     await page.goto(

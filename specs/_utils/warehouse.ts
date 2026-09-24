@@ -108,12 +108,18 @@ export async function openWarehouse(page: Page, wh: string) {
  *  retries until the route actually changes: the first click is regularly
  *  swallowed while the page is still settling. */
 export async function openNamespace(page: Page, ns: string) {
+  // Wait for THIS namespace in the route, not merely any namespace route. The
+  // old guard was `url does not already contain /namespace/`, which is false as
+  // soon as you are on one — so opening a child from a namespace page returned
+  // immediately without clicking, and every "nested" namespace was created as a
+  // sibling of the first.
+  const target = new RegExp(`/namespace/[^/]*${ns}(?:[/?]|$)`);
   const row = page.getByText(ns, { exact: true }).last();
-  for (let i = 0; i < 5 && !/\/namespace\//.test(page.url()); i++) {
+  for (let i = 0; i < 5 && !target.test(page.url()); i++) {
     await row.click().catch(() => {});
-    await page.waitForURL(/\/namespace\//, { timeout: 6000 }).catch(() => {});
+    await page.waitForURL(target, { timeout: 6000 }).catch(() => {});
   }
-  await expect(page).toHaveURL(/\/namespace\//, { timeout: 10000 });
+  await expect(page).toHaveURL(target, { timeout: 10000 });
 }
 
 /** Add a namespace on the currently-open warehouse detail page (idempotent). */
@@ -122,11 +128,33 @@ export async function addNamespace(page: Page, ns: string) {
   if (await page.getByText(ns, { exact: true }).first().isVisible({ timeout: 3000 }).catch(() => false)) {
     return;
   }
-  const addNs = page.getByRole('button', { name: /add namespace/i });
+  // On a NAMESPACE page sub-namespaces live behind the "Namespaces" tab
+  // (NamespaceNamespaces is v-if'd on it); on a WAREHOUSE page they are the
+  // default view. Without this the activator is never rendered, the click lands
+  // on nothing, and every nested namespace ends up a sibling of the first.
+  if (/\/namespace\//.test(page.url())) await selectTab(page, /^namespaces$/i);
+
+  // A namespace page renders NamespaceAddDialog TWICE (toolbar + the table's
+  // no-data slot) and the dialog's own submit is also called "Add Namespace",
+  // so an unfiltered .first() can click a hidden activator — the click lands on
+  // nothing and the field never appears. Take the visible activator, then scope
+  // the field and submit to the dialog that opened.
+  const addNs = page.getByRole('button', { name: /^add namespace$/i }).filter({ visible: true });
   await expect(addNs.first()).toBeVisible({ timeout: 15000 });
-  await addNs.first().click();
-  await page.getByLabel(/Namespace Name/i).fill(ns);
-  const submit = page.getByRole('button', { name: /^add namespace$/i }).last();
+
+  // Selecting the tab reloads the list, which re-renders the toolbar — a click
+  // dispatched at the old node hits a detached element and silently opens
+  // nothing. Retry until the dialog's field is actually on screen.
+  const field = page.getByLabel(/Namespace Name/i).filter({ visible: true }).first();
+  for (let i = 0; i < 4; i++) {
+    if (await field.isVisible({ timeout: 2000 }).catch(() => false)) break;
+    await addNs.first().click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(600);
+  }
+  await expect(field, 'the Add Namespace dialog never opened').toBeVisible({ timeout: 10000 });
+  await field.fill(ns);
+
+  const submit = page.getByRole('button', { name: /^add namespace$/i }).filter({ visible: true }).last();
   await expect(submit).toBeEnabled({ timeout: 5000 });
   await submit.click();
   await expect(page.getByText(ns, { exact: true }).first()).toBeVisible({ timeout: 15000 });
@@ -144,12 +172,44 @@ export async function seedWarehouseWithNamespace(
   return { wh, ns };
 }
 
+
+/**
+ * Select a v-tab and make sure it STAYS selected.
+ *
+ * Vuetify resets the tab while the pane's data loads, so a single click often
+ * registers as a hover and the window never switches — which is why the nested
+ * journey kept looking for an "Add Table" button on the Namespaces pane. Click
+ * until aria-selected sticks (the repo's own documented gotcha).
+ */
+export async function selectTab(page: Page, name: RegExp) {
+  const tab = page.getByRole('tab', { name }).filter({ visible: true }).first();
+  if (!(await tab.isVisible({ timeout: 5000 }).catch(() => false))) return false;
+  for (let i = 0; i < 6; i++) {
+    if ((await tab.getAttribute('aria-selected')) === 'true') return true;
+    await tab.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(400);
+  }
+  await expect(tab, `tab ${name} never became selected`).toHaveAttribute('aria-selected', 'true', {
+    timeout: 10000,
+  });
+  return true;
+}
+
 /** Add an Iceberg table from the currently-open namespace page (idempotent).
  *  The schema starts empty, so a field has to be added before Create enables. */
 export async function addTable(page: Page, tbl: string, field = 'a') {
-  const add = page.getByRole('button', { name: /^add table$/i });
-  await expect(add.first()).toBeVisible({ timeout: 15000 });
-  await add.first().click();
+  // Same tab gating as sub-namespaces: on a namespace page the table list (and
+  // its "Add Table" button) only render when the Tables tab is selected.
+  if (/\/namespace\//.test(page.url())) await selectTab(page, /^tables$/i);
+
+  // Two buttons say "Add Table" here: TableRegister (mdi-table-arrow-down) and
+  // TableCreate (mdi-table-plus). The window item uses v-show, so both sit in
+  // the DOM even while the tab is hidden — an unfiltered .first() picked a
+  // hidden node, and once visible it picked REGISTER rather than create. Target
+  // the create icon explicitly.
+  const add = page.locator('button:has(.mdi-table-plus)').filter({ visible: true }).first();
+  await expect(add).toBeVisible({ timeout: 15000 });
+  await add.click();
 
   const dialog = page.locator('.v-dialog').filter({ hasText: 'Create Table' }).last();
   await dialog.getByLabel(/Table Name/i).fill(tbl);

@@ -23,8 +23,11 @@ test.describe('nav tree refresh @authn @authz @cedar', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
   test.skip(!ENABLED_BACKENDS.length, 'no storage backend configured (set AWS_* or S3_LOCAL_ENABLE=1)');
 
-  const backend = ENABLED_BACKENDS.find((b) => b.deepFlows !== false);
-  test.skip(!backend, 'no browser-reachable storage backend for deep flows');
+  // Local Silo. Creating a table through the catalog needs no browser-side
+  // storage access, so this does not require a deepFlows backend — and it keeps
+  // the journey independent of cloud credentials.
+  const backend = ENABLED_BACKENDS.find((b) => b.key.includes('silo'));
+  test.skip(!backend, 'local Silo backend disabled (S3_LOCAL_ENABLE=0)');
 
   test('a nested namespace refreshes its tree node on create and batch delete', async ({
     bootstrappedPage: page,

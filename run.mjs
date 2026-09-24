@@ -262,16 +262,28 @@ fs.rmSync(path.join(dir, 'test-results'), { recursive: true, force: true });
 // matrix. A combo's files are `<app>-<mode>.json` plus optional `-firefox`/`-webkit`
 // browser variants; strip the browser suffix to match. Keep unit*.json + current.json.
 // `just test-clear` wipes everything for a deliberately fresh slate. Skipped for --up.
+// Default is a clean slate: a dashboard that shows "IN PROGRESS" beside columns
+// from a previous run invites reading stale numbers as current. Pass
+// --keep-results (or KEEP_RESULTS=1) to preserve combos this invocation will not
+// touch — the case where the npm matrix and the docker matrix are meant to sit
+// side by side.
 if (!upOnly && !extraGrep) {
+  const keepOthers = env.KEEP_RESULTS === '1' || process.argv.includes('--keep-results');
   const willRun = new Set();
   for (const app of apps)
     for (const mode of modes) if (servedUI || APP_MODES[app]?.includes(mode)) willRun.add(`${app}-${mode}`);
   const resultsDir = path.join(dir, 'results');
+  let cleared = 0;
   for (const f of fs.existsSync(resultsDir) ? fs.readdirSync(resultsDir) : []) {
     if (!f.endsWith('.json') || f.startsWith('unit') || f === 'current.json') continue;
     const base = f.replace(/\.json$/, '').replace(/-(firefox|webkit)$/, '');
-    if (willRun.has(base)) fs.rmSync(path.join(resultsDir, f), { force: true });
+    if (!keepOthers || willRun.has(base)) {
+      fs.rmSync(path.join(resultsDir, f), { force: true });
+      cleared++;
+    }
   }
+  if (cleared) console.log(`🧹 cleared ${cleared} stale result file(s)${keepOthers ? ' for this run' : ''}`);
+  buildDashboard({ RUN_IN_PROGRESS: '1' });
 }
 
 // Show "run in progress" on the dashboard immediately (over last run's data).

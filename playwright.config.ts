@@ -158,7 +158,9 @@ export default defineConfig({
       url: baseURL,
       // Never reuse: each (app × mode) combo needs its own server with mode-specific
       // VITE_* env. Reusing would bleed the previous combo's app/config across runs.
-      reuseExistingServer: false,
+      // REUSE_SERVER=1 keeps an already-running dev server, for iterating on a
+      // single spec against a stack that is already up (`node run.mjs --up`).
+      reuseExistingServer: process.env.REUSE_SERVER === '1',
       timeout: 120_000,
       env: viteEnv,
     },
