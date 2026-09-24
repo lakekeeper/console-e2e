@@ -134,7 +134,9 @@ test.describe('storage reachability @authn', () => {
         .getByLabel(/^Endpoint( \*)?$/i)
         .filter({ visible: true })
         .first();
-      await expect(endpoint).toBeVisible({ timeout: 15000 });
+      // 30s, not 15: webkit renders this dialog's provider pane noticeably
+      // slower than chromium and needed all three attempts to get past here.
+      await expect(endpoint).toBeVisible({ timeout: 30000 });
       await endpoint.fill(badEndpoint);
       // Credentials are write-only server-side, so the stored ones are not
       // replayed into the form — and "Update profile" re-runs storage
