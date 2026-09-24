@@ -174,7 +174,12 @@ export default defineConfig({
     // A SECOND app instance on :3002, only in authn mode — used by the storage CORS
     // test to prove a real LoQE `SELECT *` works from :3001 (bucket CORS allows it)
     // but is BLOCKED from :3002 (different origin → the in-app Query Error / CORS box).
-    ...(mode === 'authn' && browser !== 'webkit'
+    // Every browser, not just chromium/firefox: webkit used to run @smoke only,
+    // so storage/cors.spec.ts never executed there and the second origin was
+    // pointless. Now that webkit runs the full suite the spec DOES run, and
+    // without this server its ":3002 is blocked" half cannot be tested — the
+    // query fails for the trivial reason that nothing is listening.
+    ...(mode === 'authn'
       ? [
           {
             command: `npm run dev -- --port ${port2} --strictPort`,
