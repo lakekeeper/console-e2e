@@ -109,6 +109,11 @@ if (!env.S3_LOCAL_DEEP) env.S3_LOCAL_DEEP = '1';
 const LK_IMAGE_DOCKER =
   env.LK_IMAGE_DOCKER || 'quay.io/vakamo/lakekeeper-plus:d731e0e6-distroless-arm64';
 const apps = servedUI ? ['docker'] : (opt('--app') || ALL_APPS.join(',')).split(',').filter(Boolean);
+// Served-UI reports as one 'docker' combo, but the UI inside the image or the
+// LK_BIN binary is still a specific app — and specs gate on which (the OSS
+// Policies tab shows a Lakekeeper+ teaser; the Plus app renders the real Cedar
+// pane). APP alone says 'docker', so pass the flavour separately.
+const servedApp = servedUI ? opt('--app') || 'console-plus' : '';
 const modes = (opt('--mode') || ALL_MODES.join(',')).split(',').filter(Boolean);
 const extraGrep = opt('--grep');
 const keep = has('--keep');
@@ -162,6 +167,18 @@ const compose = (composeArgs, extraEnv = {}) =>
     },
   );
 
+/**
+ * Migrate the database. With LK_BIN the catalog is a host process, so the
+ * migration has to come from that same binary — the compose `migrate` service
+ * would pull LK_IMAGE, which under SERVED_UI is a registry tag that may not
+ * exist locally (and would be the wrong build anyway).
+ */
+function runMigrate(stackEnv, genName) {
+  if (!LK_BIN) return compose(['run', '--rm', 'migrate'], stackEnv);
+  const hostEnv = nativeHostEnv(genName);
+  return spawnSync(LK_BIN, ['migrate'], { stdio: 'inherit', env: { ...env, ...hostEnv } });
+}
+
 // The natively-run catalog (LK_BIN), tracked at module scope so resetBackend
 // can cycle it: after the reset its database is gone, so it has to be restarted
 // rather than left holding connections to a postgres that no longer exists.
@@ -169,9 +186,7 @@ let lkProc = null;
 let lkGenName = null;
 let lkImageLabel = '';
 
-function startNativeLakekeeper(genName, lkImage) {
-  lkGenName = genName;
-  lkImageLabel = lkImage;
+function nativeHostEnv(genName) {
   const hostEnv = {};
   for (const [k, v] of Object.entries(
     dotenv.parse(fs.readFileSync(path.join(dir, 'modes', genName), 'utf8')),
@@ -181,6 +196,13 @@ function startNativeLakekeeper(genName, lkImage) {
       .replace('http://openfga:8081', `http://localhost:${env.FGA_HOST_PORT}`)
       .replace('host.docker.internal', 'localhost');
   }
+  return hostEnv;
+}
+
+function startNativeLakekeeper(genName, lkImage) {
+  lkGenName = genName;
+  lkImageLabel = lkImage;
+  const hostEnv = nativeHostEnv(genName);
   console.log(`▶ lakekeeper from ${LK_BIN} (native, not the ${lkImage} image)`);
   lkProc = spawn(LK_BIN, ['serve'], { stdio: 'inherit', env: { ...env, ...hostEnv } });
   lkProc.on('exit', (c) => {
@@ -218,7 +240,7 @@ async function resetBackend(stackEnv, mode) {
   compose(['rm', '-sf', 'lakekeeper', ...stateful], stackEnv);
   const up = compose(['up', '-d', ...stateful], stackEnv);
   if (up.status !== 0) throw new Error('reset: compose up failed');
-  const mig = compose(['run', '--rm', 'migrate'], stackEnv);
+  const mig = runMigrate(stackEnv, lkGenName);
   if (mig.status !== 0) throw new Error('reset: migrate failed');
   if (LK_BIN) startNativeLakekeeper(lkGenName, lkImageLabel);
   else compose(['up', '-d', 'lakekeeper'], stackEnv);
@@ -282,7 +304,7 @@ function runPlaywright(app, mode, browser = 'chromium') {
     const child = spawn('npx', pwArgs, {
       cwd: dir,
       stdio: 'inherit',
-      env: { ...env, APP: app, TEST_MODE: mode, BROWSER: browser },
+      env: { ...env, APP: app, SERVED_APP: servedApp, TEST_MODE: mode, BROWSER: browser },
     });
     child.on('exit', (code) => resolve(code ?? 1));
   });
@@ -439,7 +461,7 @@ for (const app of apps) {
       }
 
       // migrate (one-shot) then serve
-      const mig = compose(['run', '--rm', 'migrate'], stackEnv);
+      const mig = runMigrate(stackEnv, genName);
       if (mig.status !== 0) throw new Error('migrate failed');
       if (LK_BIN) {
         // The mode file addresses everything by compose service name, which

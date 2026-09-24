@@ -177,7 +177,12 @@ test.describe('cedar policies @cedar', () => {
 // describe is skipped there.
 test.describe('policies teaser (OSS) @noauth @authn @authz', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
-  test.skip(process.env.APP === 'console-plus', 'console-plus renders the real Cedar pane');
+  // Under SERVED_UI the app reports as 'docker' (one combo for the image), so
+  // APP alone cannot tell OSS from Plus — SERVED_APP carries the flavour.
+  test.skip(
+    process.env.APP === 'console-plus' || process.env.SERVED_APP === 'console-plus',
+    'console-plus renders the real Cedar pane',
+  );
 
   test('the Policies tab markets Lakekeeper+', async ({ bootstrappedPage: page }) => {
     test.setTimeout(90000);

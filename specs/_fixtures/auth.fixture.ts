@@ -97,7 +97,10 @@ async function ensureBootstrapped(page: Page) {
   await accept.click();
 
   // Bootstrap done → app redirects off /bootstrap.
-  await page.waitForURL((url) => !url.pathname.includes('bootstrap'), { timeout: 25000 });
+  // 60s, not 25: webkit serving the EMBEDDED console (a production build from
+  // the binary, not a vite dev server) takes noticeably longer to leave
+  // /bootstrap, and the whole fixture then fails before any test runs.
+  await page.waitForURL((url) => !url.pathname.includes('bootstrap'), { timeout: 60000 });
 
   // …and STAYS off it. Leaving /bootstrap once is not the same as being done:
   // console-plus boots heavier, and its router guard has re-fetched serverInfo
@@ -108,7 +111,7 @@ async function ensureBootstrapped(page: Page) {
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(1000);
     if (!page.url().includes('/bootstrap')) return;
-    await page.waitForURL((url) => !url.pathname.includes('bootstrap'), { timeout: 15000 }).catch(() => {});
+    await page.waitForURL((url) => !url.pathname.includes('bootstrap'), { timeout: 30000 }).catch(() => {});
   }
 }
 
