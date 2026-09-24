@@ -1,4 +1,4 @@
-import { expect, Page } from '@playwright/test';
+import { BrowserContext, Page } from '@playwright/test';
 
 /**
  * Per-test Lakekeeper PROJECT isolation.
@@ -39,13 +39,23 @@ export function projectNameFor(title: string, browser: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 40);
-  return `e2e-${browser}-${slug}`.slice(0, 60);
+  // The run id makes a re-run land in a NEW project rather than adopting what
+  // the previous run left behind; retries within a run keep the same one.
+  const run = process.env.E2E_RUN_ID || 'local';
+  return `e2e-${browser}-${run}-${slug}`.slice(0, 60);
 }
 
 /**
  * Create the project (idempotent — a retry of the same test reuses it, which is
  * what you want, while a DIFFERENT test never can) and select it in the UI.
  */
+let active = { id: '', name: '' };
+
+/** The project the current test is scoped to. */
+export function currentProject(): { id: string; name: string } {
+  return active;
+}
+
 export async function useIsolatedProject(page: Page, name: string): Promise<void> {
   const api = process.env.LK_API_URL || 'http://localhost:8181';
   const token = await authToken(page);
@@ -71,6 +81,7 @@ export async function useIsolatedProject(page: Page, name: string): Promise<void
   }
   if (!projectId) throw new Error(`project ${name} exists but has no id`);
 
+  active = { id: projectId, name };
   await selectProject(page, projectId, name);
 }
 
@@ -83,7 +94,28 @@ export async function useIsolatedProject(page: Page, name: string): Promise<void
  * this store value, so seeding it scopes every request the test makes.
  */
 export async function selectProject(page: Page, projectId: string, name: string): Promise<void> {
-  await page.addInitScript(
+  await applyProject(page, projectId, name);
+  await page.goto('/ui/');
+  await page.waitForLoadState('domcontentloaded');
+}
+
+/**
+ * Put the test's project into ANY page or context.
+ *
+ * Per-test isolation only covers the fixture's own context, so a spec that
+ * opens a second one (a second app origin, another user) lands in the DEFAULT
+ * project and cannot see the warehouse the test just created. Every extra
+ * context has to opt into the same project.
+ */
+export async function applyProject(
+  target: Page | BrowserContext,
+  projectId: string,
+  name: string,
+): Promise<void> {
+  // A spec that opted out of project isolation has no project to join; seeding
+  // an empty id would point the app at a project that does not exist.
+  if (!projectId) return;
+  await target.addInitScript(
     ([id, projectName]) => {
       try {
         const raw = localStorage.getItem('visual');
@@ -96,6 +128,4 @@ export async function selectProject(page: Page, projectId: string, name: string)
     },
     [projectId, name] as const,
   );
-  await page.goto('/ui/');
-  await page.waitForLoadState('domcontentloaded');
 }

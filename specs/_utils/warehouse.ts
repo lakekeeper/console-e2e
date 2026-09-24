@@ -201,7 +201,11 @@ export async function seedWarehouseWithNamespace(
 export async function selectTab(page: Page, name: RegExp, scope?: Locator) {
   const root = scope ?? page;
   const tab = root.getByRole('tab', { name }).filter({ visible: true }).first();
-  if (!(await tab.isVisible({ timeout: 5000 }).catch(() => false))) return false;
+  // Some tabs only appear once the server answers (Grants waits on
+  // useGrantsSupported). 5s was short enough that selectTab returned false, the
+  // caller carried on with the WRONG tab selected, and the failure surfaced much
+  // later as "no row for anna" — the grant had never been attempted.
+  if (!(await tab.isVisible({ timeout: 20000 }).catch(() => false))) return false;
   await page.waitForLoadState('networkidle').catch(() => {});
   for (let i = 0; i < 6; i++) {
     if ((await tab.getAttribute('aria-selected').catch(() => null)) === 'true') {

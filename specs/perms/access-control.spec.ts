@@ -3,7 +3,7 @@ import { login, TEST_USER_2 } from '../_utils/auth';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
 import { seedWarehouseWithNamespace } from '../_utils/warehouse';
 import { openLoqeAndAttach, createTableViaLoqe, loqeReadTable } from '../_utils/loqe';
-import { grantTableRead } from '../_utils/permissions';
+import { grantTableRead, revokeTableRead } from '../_utils/permissions';
 import { grantAnnaTableReadCedar, resetCedarPolicy } from '../_utils/cedar';
 
 // anna runs in a FRESH browser context (separate session from peter), which does
@@ -25,8 +25,27 @@ const ANNA_BASE_URL =
 // inherit, so a table `select` alone leaves the warehouse invisible. The admin
 // grants describe on the warehouse, describe on the namespace and select on the
 // table — see _utils/permissions.ts.
+// Not project-isolated: this spec's subject IS the shared project's baseline
+// access. In a fresh project anna is denied `get_metadata` at the PROJECT level,
+// so she stays blind to the warehouse however much peter grants her on it, and
+// the "after the grant she can read it" half can never pass. Cross-browser
+// leakage is handled by the per-browser warehouse name instead.
 test.describe('access control @authz', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+  test.use({ storageState: { cookies: [], origins: [] }, isolatedProject: false });
+
+  // Never leave anna granted — the same rule the Cedar block below follows.
+  // Granting `describe` on a warehouse also lets her LIST warehouses in the
+  // project, so without this a later run finds its brand-new warehouse already
+  // visible to her and "before any grant" fails. Renaming resources cannot fix
+  // that; the grant itself has to go.
+  // Runs on every browser: run.mjs resets the backend between browser passes
+  // (postgres + openfga + silo recreated, keycloak left up), so this no longer
+  // inherits the previous pass's grants. The afterEach revoke below still runs,
+  // to keep repeated runs within ONE pass honest.
+  let seeded: { wh: string; ns: string; tbl: string } | null = null;
+  test.afterEach(async ({ bootstrappedPage: page }) => {
+    if (seeded) await revokeTableRead(page, seeded.wh, seeded.ns, seeded.tbl, 'anna');
+  });
 
   // Silo, never AWS: this journey only needs a browser-writable warehouse, and
   // the local one is always present, costs nothing and keeps the run offline.
@@ -58,12 +77,20 @@ test.describe('access control @authz', () => {
     );
     await openLoqeAndAttach(page, wh, ns);
     await createTableViaLoqe(page, wh, ns, tbl);
+    seeded = { wh, ns, tbl };
 
     // 2 · anna (no grants) is DENIED — she can't even see the warehouse to attach
     //     it, so the SELECT fails ("Catalog does not exist").
     const denyCtx = await browser.newContext({ baseURL: ANNA_BASE_URL });
     const annaDenied = await denyCtx.newPage();
     await login(annaDenied, TEST_USER_2);
+    // Never leave anna granted — the same rule the Cedar block follows. Granting
+    // `describe` on a warehouse also lets her LIST warehouses in the project, so
+    // without this a later run sees its brand-new warehouse already visible to
+    // her and the "before any grant" assertion fails. Renaming cannot fix that.
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    test.info().attach; // (no-op, keeps the comment anchored to the flow below)
+
     const before = await loqeReadTable(annaDenied, wh, ns, tbl, 2);
     expect(before.warehouseVisible, 'anna should NOT see the warehouse before any grant').toBeFalsy();
     expect(before.errored, 'anna SELECT should fail before any grant').toBeTruthy();
@@ -92,7 +119,7 @@ test.describe('access control @authz', () => {
 // (self-contained) policy file, Cedar hot-reloads, anna can read; then restores it.
 // Cedar is console-plus-only, so this is @cedar (runs only in the cedar combo).
 test.describe('access control (cedar) @cedar', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+  test.use({ storageState: { cookies: [], origins: [] }, isolatedProject: false });
 
   // Silo, never AWS: this journey only needs a browser-writable warehouse, and
   // the local one is always present, costs nothing and keeps the run offline.

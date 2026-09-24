@@ -1,6 +1,7 @@
 import { test, expect } from '../_fixtures/auth.fixture';
 import { login } from '../_utils/auth';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
+import { applyProject } from '../_utils/project';
 import { seedWarehouseWithNamespace } from '../_utils/warehouse';
 import { openLoqeAndAttach, createTableViaLoqe, loqeExec } from '../_utils/loqe';
 
@@ -20,7 +21,7 @@ test.describe('storage CORS @authn', () => {
   const deep = ENABLED_BACKENDS.find((b) => b.deepFlows !== false);
 
   test('LoQE SELECT * works on :3001 but is CORS-blocked on :3002', async (
-    { bootstrappedPage: page, browser },
+    { bootstrappedPage: page, browser, project },
     testInfo,
   ) => {
     test.skip(!deep, 'no browser-reachable (origin-scoped CORS) storage backend configured');
@@ -48,6 +49,10 @@ test.describe('storage CORS @authn', () => {
       baseURL: `http://localhost:3002`,
       recordVideo: { dir: testInfo.outputDir }, // capture the :3002 failure on video
     });
+    // Per-test project isolation only covers the fixture's own context; without
+    // this the :3002 app opens the DEFAULT project and cannot see the warehouse
+    // this test just created, so it times out waiting for it in the tree.
+    await applyProject(ctx, project.id, project.name);
     const p2 = await ctx.newPage();
     try {
       await login(p2); // peter on :3002 (OIDC client redirect '*')

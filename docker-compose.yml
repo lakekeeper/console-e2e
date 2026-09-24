@@ -66,9 +66,16 @@ services:
       MINIO_ROOT_USER: lakekeeper
       MINIO_ROOT_PASSWORD: lakekeeper-secret
       # LoQE reads and writes this bucket straight from the browser, so the S3
-      # API has to answer cross-origin. MinIO/Silo takes this server-wide, which
-      # replaces the per-bucket CORS rule bucket-init used to PUT.
-      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+      # API has to answer cross-origin. Server-wide here, which replaces the
+      # per-bucket CORS rule bucket-init used to PUT.
+      #
+      # An explicit LIST, not "*": storage/cors.spec.ts proves a SELECT works
+      # from the app's origin and is BLOCKED from another one, and a wildcard
+      # makes that unprovable — every origin is allowed, so nothing can fail.
+      # :3001 is the app, :8181 the served-UI image. :3002 is deliberately
+      # absent: it is the second app instance that spec uses as the foreign
+      # origin.
+      MINIO_API_CORS_ALLOW_ORIGIN: "${SILO_CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001,http://localhost:8181,http://127.0.0.1:8181}"
     healthcheck:
       # The image ships mc, so readiness is a real check rather than a retry loop.
       test: ["CMD", "mc", "ready", "local"]

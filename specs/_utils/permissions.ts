@@ -53,6 +53,11 @@ export async function grantOnCurrentPanel(
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      // Re-assert the tab every attempt. Vuetify resets the window back to the
+      // first tab while the pane's data loads (and after an Escape from a failed
+      // attempt), which left the retries clicking around on DETAILS — the Grant
+      // button was never on screen and anna never got a row.
+      await selectTab(page, /^grants$/i);
       await page.getByRole('button', { name: /^grant$/i }).first().click({ timeout: 10000 });
       const dialog = grantDialog(page);
       await expect(dialog).toBeVisible({ timeout: 10000 });
@@ -96,6 +101,25 @@ export async function grantOnCurrentPanel(
  * selectable. The FGA-era shortcut (one table `select`, ancestors cascaded) is
  * gone with the permissions UI.
  */
+/** selectTab, but a missing tab is a failure with a clear message rather than
+ *  a silent no-op that leaves the caller on the wrong pane. */
+async function mustSelectTab(page: Page, name: RegExp, level: string) {
+  // The URL can be the detail route while the view is still the list: the
+  // router navigates, the first data call goes out before the token has
+  // hydrated, 401s, and the guard bounces — so the detail component never
+  // mounts and none of its tabs exist. A reload re-runs the guard with the
+  // token in place, the same workaround the auth fixture and the nav-tree
+  // helpers already use.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await selectTab(page, name)) return;
+    await page.reload().catch(() => {});
+    await page.waitForLoadState('networkidle').catch(() => {});
+  }
+  throw new Error(
+    `the ${level} Grants tab never appeared — cannot grant here. URL was ${page.url()}`,
+  );
+}
+
 export async function grantTableRead(
   page: Page,
   wh: string,
@@ -105,18 +129,68 @@ export async function grantTableRead(
 ) {
   // 1 · warehouse level — without it the warehouse is invisible in the nav/LoQE tree.
   await openWarehouse(page, wh);
-  await selectTab(page, /^grants$/i);
+  await mustSelectTab(page, /^grants$/i, 'warehouse');
   await grantOnCurrentPanel(page, username, ['describe']);
 
   // 2 · namespace level.
   await openWarehouse(page, wh);
   await openNamespace(page, ns);
-  await selectTab(page, /^grants$/i);
+  await mustSelectTab(page, /^grants$/i, 'namespace');
   await grantOnCurrentPanel(page, username, ['describe']);
 
   // 3 · table level — the actual data read.
   await page.getByText(tbl, { exact: true }).first().click();
   await page.waitForURL(/\/table\//, { timeout: 10000 }).catch(() => {});
-  await selectTab(page, /^grants$/i);
+  await mustSelectTab(page, /^grants$/i, 'table');
   await grantOnCurrentPanel(page, username, ['select']);
+}
+
+/**
+ * Revoke everything a principal has on whichever Grants panel is on screen.
+ *
+ * GrantsPanel offers "Revoke all" per row plus a confirmation. A no-op when the
+ * principal has no row, so it is safe to call unconditionally in cleanup.
+ */
+export async function revokeAllOnCurrentPanel(page: Page, username: string) {
+  const row = page.getByRole('row', { name: new RegExp(username, 'i') }).first();
+  if (!(await row.isVisible({ timeout: 5000 }).catch(() => false))) return;
+
+  await row.getByRole('button', { name: /revoke all/i }).first().click({ timeout: 8000 }).catch(() => {});
+  const confirm = page
+    .locator('.v-overlay__content')
+    .filter({ hasText: /Revoke all grants/i })
+    .last();
+  if (await confirm.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await confirm.getByRole('button', { name: /^revoke$/i }).click({ timeout: 8000 }).catch(() => {});
+  }
+  await expect(row).toBeHidden({ timeout: 15000 }).catch(() => {});
+}
+
+/**
+ * Undo grantTableRead at every level it granted. Without this the spec is only
+ * runnable once per stack: granting `describe` on a warehouse also lets the user
+ * LIST warehouses in that project, so a later run's brand-new warehouse is
+ * visible to them before it has been granted — renaming resources cannot fix it.
+ */
+export async function revokeTableRead(
+  page: Page,
+  wh: string,
+  ns: string,
+  tbl: string,
+  username: string,
+) {
+  try {
+    await openWarehouse(page, wh);
+    if (await selectTab(page, /^grants$/i)) await revokeAllOnCurrentPanel(page, username);
+
+    await openWarehouse(page, wh);
+    await openNamespace(page, ns);
+    if (await selectTab(page, /^grants$/i)) await revokeAllOnCurrentPanel(page, username);
+
+    await page.getByText(tbl, { exact: true }).first().click().catch(() => {});
+    await page.waitForURL(/\/table\//, { timeout: 10000 }).catch(() => {});
+    if (await selectTab(page, /^grants$/i)) await revokeAllOnCurrentPanel(page, username);
+  } catch {
+    /* cleanup must never fail the test it is cleaning up after */
+  }
 }

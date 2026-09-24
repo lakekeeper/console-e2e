@@ -162,6 +162,31 @@ const compose = (composeArgs, extraEnv = {}) =>
     },
   );
 
+/**
+ * Wipe the backend BETWEEN browser passes, leaving keycloak up.
+ *
+ * The three passes share one stack, and some state cannot be undone from the
+ * UI: granting `describe` on a warehouse also lets a principal LIST warehouses
+ * in that project, and revoking the row does not take that back — so the second
+ * browser always found a user able to see a warehouse "before any grant".
+ *
+ * Grants live in OpenFGA's MEMORY (`command: run`, no datastore) and table data
+ * in silo's container filesystem, so both have to be recreated, not just
+ * postgres. Keycloak is left alone: it holds no per-test state and is the slow
+ * one to start (~6-20s of the ~50s a full stack costs).
+ */
+async function resetBackend(stackEnv, mode) {
+  const stateful = SERVICES[mode].filter((s) => s !== 'keycloak');
+  process.stdout.write('♻️  resetting backend (keycloak stays up) … ');
+  compose(['rm', '-sf', 'lakekeeper', ...stateful], stackEnv);
+  const up = compose(['up', '-d', ...stateful], stackEnv);
+  if (up.status !== 0) throw new Error('reset: compose up failed');
+  const mig = compose(['run', '--rm', 'migrate'], stackEnv);
+  if (mig.status !== 0) throw new Error('reset: migrate failed');
+  compose(['up', '-d', 'lakekeeper'], stackEnv);
+  await waitFor('lakekeeper', HEALTH, { timeoutMs: 120_000 });
+}
+
 async function waitFor(label, url, { timeoutMs = 120_000, expectOk = true } = {}) {
   const start = Date.now();
   process.stdout.write(`⏳ waiting for ${label} `);
@@ -201,11 +226,17 @@ function freeAppPort() {
   }
 }
 
+// One id per invocation. Resource names carry it, so a re-run against a stack
+// that is still up starts clean instead of adopting what the last run left —
+// a warehouse whose endpoint was deliberately blocked, a user already granted.
+// Retries inside a run keep the same id, so they reuse their own resources.
+env.E2E_RUN_ID = env.E2E_RUN_ID || String(Date.now()).slice(-6);
+
 function runPlaywright(app, mode, browser = 'chromium') {
   // Namespace every resource this pass creates. chromium/firefox/webkit share
   // one stack, so without this the second browser inherits the first's grants
   // and deliberately-broken warehouses — which looked like browser differences.
-  env.E2E_RESOURCE_SUFFIX = browser === 'chromium' ? '' : browser;
+  env.E2E_RESOURCE_SUFFIX = `${browser === 'chromium' ? '' : browser + '-'}${env.E2E_RUN_ID}`;
   freeAppPort();
   return new Promise((resolve) => {
     const pwArgs = ['playwright', 'test'];
@@ -427,6 +458,7 @@ for (const app of apps) {
       if (!env.NO_CROSS_BROWSER) {
         // firefox: FULL parity with chromium — runs the whole mode suite every
         // combo (LoQE/DuckDB-WASM works headless in firefox).
+        await resetBackend(stackEnv, mode);
         buildDashboard({ RUN_IN_PROGRESS: '1', RUN_CURRENT: `${app}·${mode}·firefox` });
         const ff = await runPlaywright(app, mode, 'firefox');
         results.push({ app, mode: `${mode}-firefox`, code: ff });
@@ -436,6 +468,7 @@ for (const app of apps) {
         // @smoke on authn only because Safari/WebKit DuckDB-WASM support is
         // limited; WEBKIT_SMOKE_ONLY=1 restores that.
         if (!env.WEBKIT_SMOKE_ONLY || mode === 'authn') {
+          await resetBackend(stackEnv, mode);
           buildDashboard({ RUN_IN_PROGRESS: '1', RUN_CURRENT: `${app}·${mode}·webkit` });
           const wk = await runPlaywright(app, mode, 'webkit');
           results.push({ app, mode: `${mode}-webkit`, code: wk });
