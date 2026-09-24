@@ -1,5 +1,5 @@
 import { test, expect } from '../_fixtures/auth.fixture';
-import { createWarehouse, openWarehouse, addNamespace } from '../_utils/warehouse';
+import { createWarehouse, openWarehouse, addNamespace, selectTab } from '../_utils/warehouse';
 import { openLoqeAndAttach, createTableViaLoqe } from '../_utils/loqe';
 import type { Locator } from '@playwright/test';
 import type { StorageBackend } from '../_data/storage-backends';
@@ -50,7 +50,7 @@ test.describe('storage reachability @authn', () => {
     key: 's3 (silo, blocked port)',
     tab: /S3 Compatible|S3.?Compat/i,
     enabled: env.S3_LOCAL_ENABLE !== '0',
-    fill: async (scope) => {
+    fill: async (scope, ctx) => {
       // Its OWN bucket, not a prefix inside the shared one: demo-silo is created
       // with no key-prefix, so it owns the whole bucket root and Lakekeeper
       // rejects any nested location as "used by another warehouse".
@@ -66,6 +66,8 @@ test.describe('storage reachability @authn', () => {
         env.S3_LOCAL_SECRET_KEY || 'lakekeeper-secret',
       );
       await openLayoutOptions(scope);
+      // One prefix per warehouse, same rule as every other backend.
+      if (ctx?.warehouse) await fillIfPresent(scope, /^Location$/i, ctx.warehouse);
 
       const pathStyle = scope
         .getByLabel(/path[- ]style/i)
@@ -84,11 +86,17 @@ test.describe('storage reachability @authn', () => {
 
   test('names the blocked port instead of blaming CORS', async ({
     bootstrappedPage: page,
+    browser,
   }, testInfo) => {
     test.skip(!backend.enabled, 'local Silo backend disabled');
     test.setTimeout(240000);
 
-    const wh = await createWarehouse(page, backend);
+    // Per-browser warehouse. This spec deliberately leaves the warehouse with a
+    // browser-unreachable endpoint, and createWarehouse is idempotent — so the
+    // second browser reused chromium's already-blocked warehouse and failed
+    // writing its data ("LoQE create failed"), which looked like a Firefox CORS
+    // limitation but was just run order.
+    const wh = await createWarehouse(page, backend, browser.browserType().name());
     await openWarehouse(page, wh);
     const ns = 'badport_ns';
     await addNamespace(page, ns);
@@ -115,7 +123,13 @@ test.describe('storage reachability @authn', () => {
         .filter({ hasText: /Warehouse settings|STORAGE PROVIDER/i })
         .last();
       await expect(dialog).toBeVisible({ timeout: 15000 });
-      await dialog.getByRole('tab', { name: backend.tab }).click();
+      // The settings rail lists only THIS warehouse's provider, and labels it by
+      // storage type ("AWS S3" for any s3 profile) rather than by the
+      // create-dialog entry ("S3 Compatible") — so matching backend.tab here
+      // never resolves. Pick the one provider entry instead.
+      // One click does not stick here either — Vuetify resets the tab while the
+      // pane loads, which left SETTINGS selected and no Endpoint field on screen.
+      await selectTab(page, backend.tab, dialog);
       const endpoint = dialog
         .getByLabel(/^Endpoint( \*)?$/i)
         .filter({ visible: true })

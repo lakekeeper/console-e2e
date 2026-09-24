@@ -1,5 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
-import { openWarehouse, openNamespace } from './warehouse';
+import { openWarehouse, openNamespace, selectTab } from './warehouse';
 
 // Granting moved. `PERMISSIONS_UI_ENABLED` is false in console-components 0.23:
 // the per-entity "Permissions" tabs and PermissionAssignDialog are hidden ahead
@@ -17,17 +17,6 @@ import { openWarehouse, openNamespace } from './warehouse';
 /** Click a v-tab until it actually sticks. Vuetify resets the model back to the
  *  first tab while the page's data is still loading, so a single click is lost
  *  more often than not on the heavier detail pages. */
-async function selectTab(page: Page, name: RegExp) {
-  const tab = page.getByRole('tab', { name });
-  await page.waitForLoadState('networkidle').catch(() => {});
-  for (let i = 0; i < 6; i++) {
-    await tab.click().catch(() => {});
-    await page.waitForTimeout(1000);
-    if ((await tab.getAttribute('aria-selected').catch(() => null)) === 'true') break;
-  }
-  await page.waitForLoadState('networkidle').catch(() => {});
-}
-
 /** The open GrantAssignDialog ("Grant privileges" / "Edit grants"). */
 function grantDialog(page: Page) {
   return page

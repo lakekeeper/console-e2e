@@ -28,7 +28,11 @@ const ANNA_BASE_URL =
 test.describe('access control @authz', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  const deep = ENABLED_BACKENDS.find((b) => b.deepFlows !== false);
+  // Silo, never AWS: this journey only needs a browser-writable warehouse, and
+  // the local one is always present, costs nothing and keeps the run offline.
+  const deep =
+    ENABLED_BACKENDS.find((b) => b.key.includes('silo') && b.deepFlows !== false) ??
+    ENABLED_BACKENDS.find((b) => b.deepFlows !== false);
 
   test('anna can read a table only after peter grants table-select', async ({
     bootstrappedPage: page,
@@ -39,7 +43,19 @@ test.describe('access control @authz', () => {
     const tbl = 'demo_tbl';
 
     // 1 · peter seeds a warehouse + namespace + table (LoQE create round-trip).
-    const { wh, ns } = await seedWarehouseWithNamespace(page, deep!);
+    //
+    // Per-browser warehouse. Grants are backend state and this spec never
+    // revokes them (unlike the Cedar block below, which resets in
+    // before/afterEach), so chromium's grant was still in place when firefox
+    // ran the same spec against the same stack — and anna "saw the warehouse
+    // before any grant" because she had genuinely been granted, an hour
+    // earlier, by the previous browser.
+    const { wh, ns } = await seedWarehouseWithNamespace(
+      page,
+      deep!,
+      'demo_ns',
+      browser.browserType().name(),
+    );
     await openLoqeAndAttach(page, wh, ns);
     await createTableViaLoqe(page, wh, ns, tbl);
 
@@ -78,7 +94,11 @@ test.describe('access control @authz', () => {
 test.describe('access control (cedar) @cedar', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  const deep = ENABLED_BACKENDS.find((b) => b.deepFlows !== false);
+  // Silo, never AWS: this journey only needs a browser-writable warehouse, and
+  // the local one is always present, costs nothing and keeps the run offline.
+  const deep =
+    ENABLED_BACKENDS.find((b) => b.key.includes('silo') && b.deepFlows !== false) ??
+    ENABLED_BACKENDS.find((b) => b.deepFlows !== false);
 
   test.beforeEach(() => resetCedarPolicy()); // start denied
   test.afterEach(() => resetCedarPolicy()); // never leave anna granted

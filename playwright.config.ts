@@ -71,6 +71,10 @@ export default defineConfig({
   retries: process.env.E2E_RETRIES ? Number(process.env.E2E_RETRIES) : 2, // absorb OIDC/token races
   workers: 1,
   expect: { timeout: 10_000 },
+  // Fixture setup counts against the test timeout, and a spec's own
+  // test.setTimeout() runs too late to cover it — the per-test project the
+  // bootstrappedPage fixture creates timed out at the 30s default.
+  timeout: 120_000,
   reporter: [
     ['list'],
     // Per-combo HTML (kept for drill-down).
@@ -111,9 +115,12 @@ export default defineConfig({
   // run only the cross-browser @smoke subset. E2E_ALL=1 (just ui) browses everything.
   // chromium + firefox run the FULL mode suite (firefox is tested like chrome).
   // webkit runs only the @smoke subset (Safari/WebKit DuckDB-WASM support is limited).
+  // All three browsers run the FULL mode suite. webkit was @smoke-only because
+  // DuckDB-WASM support in Safari/WebKit is limited; WEBKIT_SMOKE_ONLY=1 puts
+  // that back if its LoQE specs turn out to be unusable rather than merely slow.
   grep: process.env.E2E_ALL
     ? undefined
-    : browser === 'webkit'
+    : browser === 'webkit' && process.env.WEBKIT_SMOKE_ONLY === '1'
       ? new RegExp(`@smoke\\b`)
       : new RegExp(`@${mode}\\b`),
   // Served-UI has no second (:3002) app instance, so the storage-CORS negative

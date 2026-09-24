@@ -45,6 +45,26 @@ browser**. Read [README.md](README.md) first for the user-facing overview.
 - **Per-action timeout** is capped globally (`use.actionTimeout`) so a stuck click
   fails fast and retries instead of eating the test timeout.
 
+## Test isolation contract
+
+Combos and browser passes share ONE backend; nothing is reset between them.
+Two rules keep that from corrupting results:
+
+1. **Unique names.** `warehouseName()` appends `E2E_RESOURCE_SUFFIX`, which
+   `run.mjs` sets per browser pass. Without it firefox inherited chromium's
+   OpenFGA grants (anna was already granted before the "grant" step) and
+   chromium's deliberately-blocked warehouse (writes could not work).
+2. **Unique locations.** A warehouse created with no key-prefix owns the whole
+   bucket root, so every later warehouse in that bucket fails "Storage location
+   is not used by another warehouse" no matter what it is called. Every
+   `StorageBackend.fill` receives `ctx.warehouse` and must use it as the
+   storage Location.
+
+A spec that mutates shared state (grants, a storage profile) must either scope
+that state to its own warehouse or reset it — see `perms/access-control.spec.ts`,
+where the Cedar block resets in before/afterEach and the OpenFGA block relies on
+a per-browser warehouse instead.
+
 ## Hard-won gotchas (don't relearn these)
 
 - **podman, not docker** — `docker` is a shell alias invisible to `spawn`; `run.mjs`

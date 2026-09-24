@@ -1,12 +1,24 @@
-import { Page, expect } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { login } from './auth';
 import { recoverFromOffline } from './app';
 import type { StorageBackend } from '../_data/storage-backends';
 
 /** A clean, stable warehouse name from a backend key: demo-aws, demo-silo. */
-export function warehouseName(backend: StorageBackend) {
+/**
+ * Warehouse name for a backend, namespaced to the browser pass.
+ *
+ * chromium, firefox and webkit run one after another against the SAME stack, so
+ * anything a spec leaves behind (an OpenFGA grant, a warehouse whose endpoint it
+ * deliberately blocked) is still there when the next browser starts. That read
+ * as "firefox fails tests chromium passes" when it was really run order. Every
+ * browser now gets its own warehouses; run.mjs sets E2E_RESOURCE_SUFFIX per pass.
+ */
+export function warehouseName(
+  backend: StorageBackend,
+  suffix = process.env.E2E_RESOURCE_SUFFIX || '',
+) {
   const slug = (backend.key.match(/\(([^)]+)\)/)?.[1] ?? backend.key).replace(/[^a-z0-9]/gi, '');
-  return `demo-${slug}`;
+  return `demo-${slug}${suffix ? `-${suffix.replace(/[^a-z0-9]/gi, '')}` : ''}`;
 }
 
 async function gotoWarehouses(page: Page) {
@@ -42,8 +54,12 @@ function createWarehouseDialog(page: Page) {
 
 /** Create a warehouse for the given storage backend (idempotent-ish: if it already
  *  exists the list still shows it, which is all callers assert). Returns its name. */
-export async function createWarehouse(page: Page, backend: StorageBackend) {
-  const wh = warehouseName(backend);
+export async function createWarehouse(
+  page: Page,
+  backend: StorageBackend,
+  suffix = process.env.E2E_RESOURCE_SUFFIX || '',
+) {
+  const wh = warehouseName(backend, suffix);
   await gotoWarehouses(page);
   // Idempotent: a prior spec in this combo may have already created it (combos
   // share backend state, no per-test cleanup). Reuse it instead of colliding.
@@ -72,7 +88,7 @@ export async function createWarehouse(page: Page, backend: StorageBackend) {
   // Provider rail. The pane it selects is a v-show div, not a window item, and
   // only the selected provider's form is mounted — so `dialog` is a safe scope.
   await dialog.getByRole('tab', { name: backend.tab }).click();
-  await backend.fill(dialog);
+  await backend.fill(dialog, { warehouse: wh });
 
   // "Create" became "Verify & Create": it runs the server-side storage validation
   // first and only creates when that passes. It also switches the rail to the
@@ -165,8 +181,9 @@ export async function seedWarehouseWithNamespace(
   page: Page,
   backend: StorageBackend,
   ns = 'demo_ns',
+  suffix = process.env.E2E_RESOURCE_SUFFIX || '',
 ) {
-  const wh = await createWarehouse(page, backend);
+  const wh = await createWarehouse(page, backend, suffix);
   await openWarehouse(page, wh);
   await addNamespace(page, ns);
   return { wh, ns };
@@ -181,13 +198,18 @@ export async function seedWarehouseWithNamespace(
  * journey kept looking for an "Add Table" button on the Namespaces pane. Click
  * until aria-selected sticks (the repo's own documented gotcha).
  */
-export async function selectTab(page: Page, name: RegExp) {
-  const tab = page.getByRole('tab', { name }).filter({ visible: true }).first();
+export async function selectTab(page: Page, name: RegExp, scope?: Locator) {
+  const root = scope ?? page;
+  const tab = root.getByRole('tab', { name }).filter({ visible: true }).first();
   if (!(await tab.isVisible({ timeout: 5000 }).catch(() => false))) return false;
+  await page.waitForLoadState('networkidle').catch(() => {});
   for (let i = 0; i < 6; i++) {
-    if ((await tab.getAttribute('aria-selected')) === 'true') return true;
+    if ((await tab.getAttribute('aria-selected').catch(() => null)) === 'true') {
+      await page.waitForLoadState('networkidle').catch(() => {});
+      return true;
+    }
     await tab.click({ timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(600);
   }
   await expect(tab, `tab ${name} never became selected`).toHaveAttribute('aria-selected', 'true', {
     timeout: 10000,

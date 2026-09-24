@@ -55,7 +55,14 @@ export interface StorageBackend {
   /** True when this backend's credentials are configured. */
   enabled: boolean;
   /** Fill the provider's form (scoped to the open create modal). */
-  fill: (scope: Locator) => Promise<void>;
+  /**
+   * Fill this provider's form. `ctx.warehouse` is the name being created — use
+   * it for the storage LOCATION so every warehouse owns a distinct prefix.
+   * A warehouse created without one owns the whole bucket root, and then every
+   * later warehouse in that bucket fails "Storage location is not used by
+   * another warehouse" — whatever it is called, in whatever browser.
+   */
+  fill: (scope: Locator, ctx?: { warehouse: string }) => Promise<void>;
   /**
    * Whether deep flows (open detail -> namespace -> table) work. They need the
    * storage endpoint reachable FROM THE BROWSER (the detail page's storage
@@ -73,7 +80,7 @@ const has = (...keys: string[]) => keys.every((k) => !!env[k]);
 // docker matrix to local Silo (wildcard CORS). See `just test-matrix-docker`.
 const cloud = (...keys: string[]) => env.SERVED_UI !== '1' && has(...keys);
 
-async function fillS3Compat(scope: Locator) {
+async function fillS3Compat(scope: Locator, ctx?: { warehouse: string }) {
   // Local Silo, a maintained MinIO fork (S3-compatible). The endpoint must be
   // reachable from BOTH the browser and the lakekeeper container, so default to
   // the host LAN IP (run.mjs injects S3_LOCAL_ENDPOINT); silo:9000 is
@@ -89,6 +96,9 @@ async function fillS3Compat(scope: Locator) {
   // Path-style access lives under the collapsed "Layout & options" accordion —
   // Silo needs it or every request resolves to a virtual-host URL.
   await openLayoutOptions(scope);
+  // One prefix per warehouse (see the `fill` contract): without it this
+  // warehouse owns the bucket root and blocks every later one.
+  if (ctx?.warehouse) await fillIfPresent(scope, /^Location$/i, ctx.warehouse);
   const pathStyle = scope.getByLabel(/path[- ]style/i).filter({ visible: true }).first();
   if (await pathStyle.isVisible().catch(() => false)) {
     await pathStyle.check().catch(() => pathStyle.click().catch(() => {}));

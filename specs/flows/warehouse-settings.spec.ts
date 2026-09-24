@@ -1,6 +1,6 @@
 import { test, expect } from '../_fixtures/auth.fixture';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
-import { createWarehouse, openWarehouse, warehouseName } from '../_utils/warehouse';
+import { createWarehouse, openWarehouse, warehouseName, selectTab } from '../_utils/warehouse';
 
 // Saving storage from the fullscreen settings dialog used to report success in a
 // snackbar and leave the dialog sitting there, which reads as "nothing
@@ -37,7 +37,10 @@ test.describe('warehouse settings @authn @authz @cedar', () => {
     await expect(dialog).toBeVisible({ timeout: 15000 });
 
     await test.step('2 · re-enter the storage credentials', async () => {
-      await dialog.getByRole('tab', { name: backend!.tab }).click();
+      // Same as the reachability spec: the settings rail labels the provider by
+      // storage type, not by the create-dialog entry, so pick the single
+      // provider entry rather than matching backend.tab.
+      await selectTab(page, backend!.tab, dialog);
 
       // Only the CREDENTIALS. The profile fields (bucket, region, endpoint) are
       // rendered readonly here because the stored profile is what the warehouse

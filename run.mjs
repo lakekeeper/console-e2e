@@ -100,7 +100,11 @@ const servedUI = env.SERVED_UI === '1';
 // wildcard CORS make it browser-usable, no AWS). Turn its deep flows on here so
 // storage-backends.ts flips deepFlows for the local S3 backend — the npm matrix,
 // which never sets this, keeps its historical create+verify behavior.
-if (servedUI && !env.S3_LOCAL_DEEP) env.S3_LOCAL_DEEP = '1';
+// Silo carries the deep flows (browser LoQE read/write) in EVERY run, not just
+// the docker matrix: it has wildcard CORS and vends STS credentials, so the
+// specs that need a browser-writable warehouse no longer reach for AWS. Set
+// S3_LOCAL_DEEP=0 to opt out.
+if (!env.S3_LOCAL_DEEP) env.S3_LOCAL_DEEP = '1';
 // Pinned pushed image under test; override with LK_IMAGE_DOCKER in .env.
 const LK_IMAGE_DOCKER =
   env.LK_IMAGE_DOCKER || 'quay.io/vakamo/lakekeeper-plus:d731e0e6-distroless-arm64';
@@ -198,6 +202,10 @@ function freeAppPort() {
 }
 
 function runPlaywright(app, mode, browser = 'chromium') {
+  // Namespace every resource this pass creates. chromium/firefox/webkit share
+  // one stack, so without this the second browser inherits the first's grants
+  // and deliberately-broken warehouses — which looked like browser differences.
+  env.E2E_RESOURCE_SUFFIX = browser === 'chromium' ? '' : browser;
   freeAppPort();
   return new Promise((resolve) => {
     const pwArgs = ['playwright', 'test'];
@@ -267,7 +275,7 @@ fs.rmSync(path.join(dir, 'test-results'), { recursive: true, force: true });
 // --keep-results (or KEEP_RESULTS=1) to preserve combos this invocation will not
 // touch — the case where the npm matrix and the docker matrix are meant to sit
 // side by side.
-if (!upOnly && !extraGrep) {
+if (!upOnly) {
   const keepOthers = env.KEEP_RESULTS === '1' || process.argv.includes('--keep-results');
   const willRun = new Set();
   for (const app of apps)
@@ -416,7 +424,7 @@ for (const app of apps) {
 
       // 3D matrix (cross-browser). The stack is up, so run extra browsers now.
       // Skip when filtering (--grep) or via NO_CROSS_BROWSER=1.
-      if (!extraGrep && !env.NO_CROSS_BROWSER) {
+      if (!env.NO_CROSS_BROWSER) {
         // firefox: FULL parity with chromium — runs the whole mode suite every
         // combo (LoQE/DuckDB-WASM works headless in firefox).
         buildDashboard({ RUN_IN_PROGRESS: '1', RUN_CURRENT: `${app}·${mode}·firefox` });
@@ -424,9 +432,10 @@ for (const app of apps) {
         results.push({ app, mode: `${mode}-firefox`, code: ff });
         buildDashboard({ RUN_IN_PROGRESS: '1' });
 
-        // webkit: @smoke only, once per app (authn) — Safari/WebKit DuckDB-WASM
-        // support is limited, so deep flows stay off it.
-        if (mode === 'authn') {
+        // webkit now runs every mode, like chromium and firefox. It used to be
+        // @smoke on authn only because Safari/WebKit DuckDB-WASM support is
+        // limited; WEBKIT_SMOKE_ONLY=1 restores that.
+        if (!env.WEBKIT_SMOKE_ONLY || mode === 'authn') {
           buildDashboard({ RUN_IN_PROGRESS: '1', RUN_CURRENT: `${app}·${mode}·webkit` });
           const wk = await runPlaywright(app, mode, 'webkit');
           results.push({ app, mode: `${mode}-webkit`, code: wk });

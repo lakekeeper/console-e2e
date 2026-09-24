@@ -42,6 +42,11 @@ test-unit:
     cd ../console-components && npm test
     @cd ../console-plus-components 2>/dev/null && [ -f vitest.config.ts ] && npm test || echo "➖ console-plus-components: no unit tests yet"
 
+# Re-run only the tests matching a pattern, across all browsers, and show just
+# those in the dashboard. e.g. `just test-grep console authn "blocked port"`
+test-grep app mode pattern:
+    node run.mjs --app {{app}} --mode {{mode}} --grep "{{pattern}}"
+
 # One combo, e.g. `just test-one console authn`
 test-one app mode:
     node run.mjs --app {{app}} --mode {{mode}}

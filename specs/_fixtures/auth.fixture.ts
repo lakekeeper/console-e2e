@@ -1,10 +1,11 @@
 import { test as base, expect, Page } from '@playwright/test';
 import { addCoverageReport } from 'monocart-reporter';
 import { login, isAuthMode, TEST_USER } from '../_utils/auth';
+import { projectNameFor, useIsolatedProject } from '../_utils/project';
 
 type AuthFixtures = {
   authenticatedPage: Page; // logged in (or direct access in noauth)
-  bootstrappedPage: Page; // logged in AND server bootstrapped
+  bootstrappedPage: Page; // logged in, bootstrapped, in its OWN project
   _coverage: void; // auto fixture: collect V8 coverage (chromium, E2E_COVERAGE=1)
 };
 
@@ -86,9 +87,17 @@ export const test = base.extend<AuthFixtures>({
     await use(page);
   },
 
-  bootstrappedPage: async ({ page }, use) => {
+  // Every test gets its own Lakekeeper PROJECT. Warehouses, namespaces and
+  // grants all live inside a project, so this is the isolation a fresh stack
+  // would give — at about a second instead of ~50. Opt out with
+  // E2E_SHARED_PROJECT=1 for a spec that deliberately needs the default project.
+  bootstrappedPage: async ({ page, browserName }, use, testInfo) => {
     await login(page, TEST_USER);
     await ensureBootstrapped(page);
+    if (process.env.E2E_SHARED_PROJECT !== '1') {
+      const name = projectNameFor(testInfo.title, browserName);
+      await useIsolatedProject(page, name);
+    }
     await use(page);
   },
 });
