@@ -1,6 +1,13 @@
 import { test, expect } from '../_fixtures/auth.fixture';
-import { createWarehouse, openWarehouse, addNamespace, selectTab } from '../_utils/warehouse';
+import {
+  createWarehouse,
+  openWarehouse,
+  addNamespace,
+  selectTab,
+  openWarehouseSettings,
+} from '../_utils/warehouse';
 import { openLoqeAndAttach, createTableViaLoqe } from '../_utils/loqe';
+import { gotoReady } from '../_utils/app';
 import type { Locator } from '@playwright/test';
 import type { StorageBackend } from '../_data/storage-backends';
 import { chooseVendedCredentials } from '../_data/storage-backends';
@@ -116,13 +123,7 @@ test.describe('storage reachability @authn', () => {
 
     await test.step('move the endpoint to the browser-blocked port', async () => {
       await openWarehouse(page, wh);
-      await page.locator('button:has(.mdi-cog)').first().click();
-      await page.getByText('Warehouse settings', { exact: true }).click();
-      const dialog = page
-        .locator('.v-overlay__content')
-        .filter({ hasText: /Warehouse settings|STORAGE PROVIDER/i })
-        .last();
-      await expect(dialog).toBeVisible({ timeout: 15000 });
+      const dialog = await openWarehouseSettings(page);
       // The settings rail lists only THIS warehouse's provider, and labels it by
       // storage type ("AWS S3" for any s3 profile) rather than by the
       // create-dialog entry ("S3 Compatible") — so matching backend.tab here
@@ -159,12 +160,13 @@ test.describe('storage reachability @authn', () => {
     });
 
     // Files: the storage explorer lists the table prefix directly from the browser.
-    await page.goto(
-      `/ui/warehouse/${await warehouseIdFromUrl(page, wh)}/namespace/${ns}/table/badport_tbl?tab=files`,
-    );
+    const whId = await warehouseIdFromUrl(page, wh);
+    const tableUrl = (tab: string) =>
+      `/ui/warehouse/${whId}/namespace/${ns}/table/badport_tbl?tab=${tab}`;
+    await gotoReady(page, tableUrl('files'));
     const filesAlert = page.locator('.v-alert').first();
     await expect(filesAlert).toBeVisible({ timeout: 60000 });
-    const filesText = await filesAlert.innerText();
+    const filesText = await diagnosis(filesAlert);
     await testInfo.attach('files-blocked-port', {
       body: await page.screenshot(),
       contentType: 'image/png',
@@ -174,12 +176,10 @@ test.describe('storage reachability @authn', () => {
     expect(filesText).not.toMatch(/cors/i);
 
     // Preview: the same verdict, reached through LoQE rather than the explorer.
-    await page.goto(
-      `/ui/warehouse/${await warehouseIdFromUrl(page, wh)}/namespace/${ns}/table/badport_tbl?tab=preview`,
-    );
+    await gotoReady(page, tableUrl('preview'));
     const previewAlert = page.locator('.v-alert').first();
     await expect(previewAlert).toBeVisible({ timeout: 120000 });
-    const previewText = await previewAlert.innerText();
+    const previewText = await diagnosis(previewAlert);
     await testInfo.attach('preview-blocked-port', {
       body: await page.screenshot(),
       contentType: 'image/png',
@@ -189,6 +189,22 @@ test.describe('storage reachability @authn', () => {
     expect(previewText).not.toMatch(/cors/i);
   });
 });
+
+/**
+ * OUR verdict out of an engine error alert, without the engine's own line.
+ *
+ * EngineErrorAlert renders two <pre class="engine-error-text">: the first is the
+ * diagnosis the console reached, the second is DuckDB's raw message kept
+ * verbatim — and DuckDB ends EVERY failed download with "might be potentially a
+ * CORS error". Asserting "does not blame CORS" over the whole alert therefore
+ * fails on a sentence that is not ours and that the component shows on purpose;
+ * the component itself draws the same line when it decides whether to offer the
+ * CORS helper. Falls back to the alert when there is no engine line to split off.
+ */
+async function diagnosis(alert: Locator) {
+  const own = alert.locator('pre.engine-error-text').first();
+  return (await own.count()) ? own.innerText() : alert.innerText();
+}
 
 /** The warehouse id from the detail route we are already on (…/warehouse/<id>…). */
 async function warehouseIdFromUrl(page: import('@playwright/test').Page, wh: string) {

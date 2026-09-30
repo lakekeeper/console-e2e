@@ -39,17 +39,24 @@ test.describe('cedar policies @cedar', () => {
     test.setTimeout(120000);
     await gotoPolicies(page);
 
-    // Grouped Configure / Inspect / Investigate. The two writable panes lead.
+    // Grouped by LEVEL now — Project (what this project decides), Server (what
+    // the operator ships) and Investigate — and the group headings carry the
+    // level, so the entries no longer repeat it: "Active Policies" is the Server
+    // group's "Policies", "Cedar Schema" is its "Schema". Scope to the rail:
+    // "Policies" alone also names the Governance tab that contains it.
+    const rail = page.locator('.cedar-rail');
     for (const pane of [
       'Predefined Policies',
       'Stored Policies',
-      'Active Policies',
+      'Policies',
       'Policy Sources',
       'Entity Sources',
-      'Cedar Schema',
+      'Schema',
       'Resolve Entities',
     ]) {
-      await expect(page.getByRole('tab', { name: pane })).toBeVisible({ timeout: 15000 });
+      await expect(rail.getByRole('tab', { name: pane, exact: true })).toBeVisible({
+        timeout: 15000,
+      });
     }
   });
 
@@ -65,11 +72,14 @@ test.describe('cedar policies @cedar', () => {
       timeout: 20000,
     });
     await expect(page.getByRole('button', { name: 'Warehouse', exact: true })).toBeVisible();
-    // The pack itself: ~47 shipped policies, one toggle each. Vuetify's v-switch
-    // exposes role="checkbox", not role="switch".
-    await expect(page.getByText(/Predefined policies\s+\d+\s*\/\s*\d+ in force/)).toBeVisible({
+    // The pack itself: ~50 shipped policies, one toggle each. The count moved out
+    // of the heading into its own chip ("54 / 54 enforced"), so heading and count
+    // are two elements and one text match can no longer span both.
+    await expect(page.getByText('Predefined policies', { exact: true })).toBeVisible({
       timeout: 20000,
     });
+    await expect(page.getByText(/\d+\s*\/\s*\d+\s+enforced/)).toBeVisible({ timeout: 20000 });
+    // Vuetify's v-switch exposes role="checkbox", not role="switch".
     await expect(page.getByRole('checkbox').first()).toBeVisible({ timeout: 20000 });
   });
 

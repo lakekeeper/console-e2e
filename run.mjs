@@ -176,7 +176,19 @@ const compose = (composeArgs, extraEnv = {}) =>
 function runMigrate(stackEnv, genName) {
   if (!LK_BIN) return compose(['run', '--rm', 'migrate'], stackEnv);
   const hostEnv = nativeHostEnv(genName);
-  return spawnSync(LK_BIN, ['migrate'], { stdio: 'inherit', env: { ...env, ...hostEnv } });
+  // The compose `migrate` service waits on postgres' healthcheck via depends_on;
+  // a host process has no such gate, so the first attempt can hit the published
+  // port before postgres accepts connections ("Error creating write pool …
+  // Connection reset by peer"). noauth shows it because it has no keycloak wait
+  // to sit through first. Retry for ~60s instead.
+  let res;
+  for (let i = 0; i < 20; i++) {
+    res = spawnSync(LK_BIN, ['migrate'], { stdio: 'inherit', env: { ...env, ...hostEnv } });
+    if (res.status === 0) return res;
+    console.log(`… postgres not ready yet, retrying migrate (${i + 1}/20)`);
+    spawnSync('bash', ['-c', 'sleep 3']);
+  }
+  return res;
 }
 
 // The natively-run catalog (LK_BIN), tracked at module scope so resetBackend
@@ -194,7 +206,10 @@ function nativeHostEnv(genName) {
     hostEnv[k] = String(v)
       .replace('@postgres:5432', `@localhost:${env.PG_HOST_PORT}`)
       .replace('http://openfga:8081', `http://localhost:${env.FGA_HOST_PORT}`)
-      .replace('host.docker.internal', 'localhost');
+      .replace('host.docker.internal', 'localhost')
+      // cedar's policy file is a compose bind mount (CEDAR_POLICY_DIR:/policies);
+      // a host process has no such mount, so point it back at the source dir.
+      .replace('/policies/', `${env.CEDAR_POLICY_DIR || path.join(dir, 'cedar')}/`);
   }
   return hostEnv;
 }
@@ -276,7 +291,7 @@ function freeAppPort() {
   // combo errors with CONNECTION_REFUSED. Poll up to ~8s for a clean release.
   // :3002 is the CORS test's second app instance (authn mode).
   for (let i = 0; i < 25; i++) {
-    const inUse = spawnSync('bash', ['-c', `lsof -ti tcp:${port} tcp:3002 2>/dev/null`], {
+    const inUse = spawnSync('bash', ['-c', `lsof -ti tcp:${port} -i tcp:3002 2>/dev/null`], {
       encoding: 'utf8',
     }).stdout.trim();
     if (!inUse) return;

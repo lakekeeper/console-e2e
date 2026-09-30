@@ -1,6 +1,12 @@
 import { test, expect } from '../_fixtures/auth.fixture';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
-import { createWarehouse, openWarehouse, warehouseName, selectTab } from '../_utils/warehouse';
+import {
+  createWarehouse,
+  openWarehouse,
+  warehouseName,
+  selectTab,
+  openWarehouseSettings,
+} from '../_utils/warehouse';
 
 // Saving storage from the fullscreen settings dialog used to report success in a
 // snackbar and leave the dialog sitting there, which reads as "nothing
@@ -26,15 +32,10 @@ test.describe('warehouse settings @authn @authz @cedar', () => {
     await createWarehouse(page, backend!);
     await openWarehouse(page, wh);
 
-    await test.step('1 · open Warehouse settings from the header cog', async () => {
-      // Icon-only button, so it has no accessible name. `mdi-cog-outline` on the
-      // menu entry is a different class and does not collide with this.
-      await page.locator('button:has(.mdi-cog)').first().click();
-      await page.getByText('Warehouse settings', { exact: true }).click();
-    });
-
-    const dialog = page.locator('.v-overlay__content').filter({ hasText: /Warehouse settings|STORAGE PROVIDER/i }).last();
-    await expect(dialog).toBeVisible({ timeout: 15000 });
+    // Opening it is a step of its own: the menu entry can swallow a click and
+    // leave the menu open with no dialog behind it, so the helper retries.
+    const dialog = await test.step('1 · open Warehouse settings from the header cog', () =>
+      openWarehouseSettings(page));
 
     await test.step('2 · re-enter the storage credentials', async () => {
       // Same as the reachability spec: the settings rail labels the provider by

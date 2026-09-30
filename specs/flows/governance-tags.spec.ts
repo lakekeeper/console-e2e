@@ -181,10 +181,18 @@ test.describe('governance tag grants @authz', () => {
 
     await test.step('revoke all access', async () => {
       await annaRow.first().getByRole('button', { name: /revoke all/i }).click();
-      // Two "Revoke all" controls exist once the confirm dialog is open (the row's
-      // trigger + the dialog's flat confirm); the dialog's is teleported to the end
-      // of <body>, so it is the last match.
-      await page.getByRole('button', { name: 'Revoke all', exact: true }).last().click();
+      // Two "Revoke all" controls exist once the confirm dialog is open — the
+      // row's trigger and the dialog's confirm. `.last()` used to mean the
+      // dialog's, but the overlay container sits BEFORE the grants table in the
+      // DOM, so it picked the row button again — and that one is under the
+      // dialog's scrim, so the click spent its whole timeout being intercepted.
+      // Scope to the confirm dialog by its title instead of guessing at order.
+      const confirm = page
+        .locator('.v-overlay__content')
+        .filter({ hasText: /Revoke all grants|Revoke all access/i })
+        .last();
+      await expect(confirm).toBeVisible({ timeout: 10000 });
+      await confirm.getByRole('button', { name: 'Revoke all', exact: true }).click();
       await expect(annaRow).toHaveCount(0, { timeout: 15000 });
     });
   });

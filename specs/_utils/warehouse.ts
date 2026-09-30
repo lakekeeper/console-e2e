@@ -191,6 +191,50 @@ export async function seedWarehouseWithNamespace(
 
 
 /**
+ * The fullscreen warehouse dialog (create or settings), as a scope.
+ *
+ * NOT `.v-overlay__content` filtered by its text: the settings MENU carries the
+ * words "Warehouse settings" too, and — the one that actually bit — clicking a
+ * provider entry pops a TOOLTIP ("Fill in the storage provider form …") which
+ * matches /storage provider/i and, being newest, wins `.last()`. The scope then
+ * held a tooltip with no tabs in it, and every later step reported its element
+ * as "not found". The rail is what makes this dialog itself, so key on that: no
+ * menu and no tooltip has tabs.
+ */
+export function warehouseDialog(page: Page): Locator {
+  return page
+    .locator('.v-overlay__content')
+    .filter({ has: page.getByRole('tab', { name: /^settings$/i }) })
+    .last();
+}
+
+/**
+ * Open Warehouse settings from the header cog and return the dialog.
+ *
+ * The entry is an option in a v-menu listbox whose activator repeats its label,
+ * so a bare getByText can land on the trigger and only re-toggle the menu —
+ * which is how the cedar combo kept reaching step 2 with no dialog on screen.
+ * Retry until the dialog is actually up.
+ */
+export async function openWarehouseSettings(page: Page): Promise<Locator> {
+  const dialog = warehouseDialog(page);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await dialog.isVisible().catch(() => false)) return dialog;
+    // Icon-only button, so it has no accessible name.
+    await page.locator('button:has(.mdi-cog)').first().click().catch(() => {});
+    const option = page.getByRole('option', { name: /^warehouse settings$/i }).first();
+    if (await option.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await option.click().catch(() => {});
+    } else {
+      await page.getByText('Warehouse settings', { exact: true }).last().click().catch(() => {});
+    }
+    if (await dialog.isVisible({ timeout: 10000 }).catch(() => false)) return dialog;
+  }
+  await expect(dialog, 'Warehouse settings dialog never opened').toBeVisible({ timeout: 15000 });
+  return dialog;
+}
+
+/**
  * Select a v-tab and make sure it STAYS selected.
  *
  * Vuetify resets the tab while the pane's data loads, so a single click often
