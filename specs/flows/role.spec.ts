@@ -58,7 +58,7 @@ test.describe('role CRUD @authz', () => {
     await test.step('5 · membership withholds the nested scope on OpenFGA', async () => {
       // Expanding a role's membership closure needs the CATALOG to own the
       // assignments. OpenFGA keeps that graph in its own store, so the
-      // management API would 501 — the console withholds the "Incl. nested"
+      // management API would 501 — the console withholds the "Show nested"
       // scope up front rather than offering a control that cannot answer
       // (ASSIGNMENT_MANAGING_AUTHZ_BACKENDS in console-components). This combo
       // IS OpenFGA, so the correct assertion is that the toggle is absent.
