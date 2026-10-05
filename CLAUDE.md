@@ -66,8 +66,9 @@ a still-running stack starts clean; retries within a run reuse their own project
 project's baseline access: a brand-new project denies a second user even
 `get_metadata`, so "grant her the warehouse and she can see it" cannot hold
 there. `test.use({ isolatedProject: false })`, and rely on warehouse names
-carrying `E2E_RESOURCE_SUFFIX` (browser + run id). `perms/access-control.spec.ts`
-is the only one.
+carrying `E2E_RESOURCE_SUFFIX` (browser + run id). `perms/access-control.spec.ts`,
+`perms/tag-rights.spec.ts` and the `perms/*-refusals.spec.ts` specs that need anna
+to see a warehouse use it; each revokes what it granted in afterEach.
 
 **Browser passes get a fresh backend.** run.mjs calls `resetBackend()` before
 the firefox and webkit passes: postgres, openfga, silo and bucket-init are

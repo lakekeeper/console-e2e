@@ -5,8 +5,10 @@ import {
   createTagDefinition,
   openTagDefinition,
   applyEntityTag,
-  openManageTagsMenu,
   removeEntityTag,
+  tagsSection,
+  tagChip,
+  selectDetailsTab,
 } from '../_utils/tags';
 import { login, TEST_USER_2 } from '../_utils/auth';
 import { grantOnCurrentPanel } from '../_utils/permissions';
@@ -52,23 +54,19 @@ test.describe('governance tags @authn @authz @cedar', () => {
       await expect(page.getByText('warehouse', { exact: true }).first()).toBeVisible();
     });
 
-    await test.step('3 · apply the marker tag to the warehouse', async () => {
+    await test.step('3 · apply the marker tag to the warehouse (inline, Details tab)', async () => {
+      // Tags are edited in place on the Details tab now — the "Manage tags"
+      // dialog is gone. applyEntityTag selects the tab itself: the warehouse
+      // page opens on "namespaces", where no tag chips render.
       await openWarehouse(page, wh);
       await applyEntityTag(page, { tagName: markerTag });
     });
 
     await test.step('4 · the tag chip shows up on the warehouse Details tab', async () => {
-      // The chips live on the Details tab (WarehouseDetails), and the warehouse
-      // page opens on "namespaces" — so the tab has to be selected first. Tab
-      // switching no longer navigates (history.replaceState, not router.replace),
-      // so this asserts on the DOM rather than awaiting a URL change.
-      const detailsTab = page.getByRole('tab', { name: /^details$/i });
-      for (let i = 0; i < 5; i++) {
-        await detailsTab.click().catch(() => {});
-        await page.waitForTimeout(800);
-        if ((await detailsTab.getAttribute('aria-selected')) === 'true') break;
-      }
-      await expect(page.getByText(markerTag, { exact: true }).first()).toBeVisible({ timeout: 15000 });
+      // Re-open so the chip is read from a fresh load, not the optimistic row.
+      await openWarehouse(page, wh);
+      await selectDetailsTab(page);
+      await expect(tagChip(tagsSection(page), markerTag)).toBeVisible({ timeout: 15000 });
     });
 
     await test.step('5 · reverse lookup: the tag definition lists the warehouse as a target', async () => {
@@ -105,14 +103,13 @@ test.describe('governance tags @authn @authz @cedar', () => {
     await test.step('8 · detach both tags, then delete both definitions', async () => {
       // Detach the marker tag from the warehouse (applied in step 3) — a
       // definition can't be deleted while still attached anywhere.
+      // Inline: the chip's ✕ → "Remove <name>?" → Remove.
       await openWarehouse(page, wh);
-      await openManageTagsMenu(page);
       await removeEntityTag(page, markerTag);
 
       // Detach the free-text tag from the namespace (applied in step 6).
       await openWarehouse(page, wh);
       await openNamespace(page, ns);
-      await openManageTagsMenu(page);
       await removeEntityTag(page, textTag);
 
       for (const name of [markerTag, textTag]) {

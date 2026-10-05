@@ -1,5 +1,6 @@
-import { Page, expect } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { recoverFromOffline } from './app';
+import { selectTab } from './warehouse';
 
 export type TagScope = 'warehouse' | 'namespace' | 'table' | 'view' | 'generic-table' | 'column';
 
@@ -105,125 +106,280 @@ export async function openTagDefinition(page: Page, name: string) {
   await expect(page).toHaveURL(/\/governance\/tags\/[^/]+/, { timeout: 10000 });
 }
 
-/** Open the cog "Manage tags" action for the entity currently on screen (warehouse,
- *  namespace, or table detail page — table's dialog is tabbed but defaults to the
- *  "Table tags" tab, which is the same underlying panel). Assumes exactly one cog
- *  actions-menu button is visible. */
-export async function openManageTagsMenu(page: Page) {
-  // Just after navigating in, the actions-menu button exists but its v-menu
-  // activator isn't wired up yet — a click here opens nothing. Let the page
-  // settle first (same class of race as the tab-switch/permission checks).
+
+/** The tag definition id of the detail page on screen (`/governance/tags/:id`). */
+export function tagDefinitionIdFromUrl(page: Page): string {
+  return page.url().match(/\/governance\/tags\/([^/?#]+)/)?.[1] ?? '';
+}
+
+// ---------------------------------------------------------------------------
+// Inline tag editing (console-components ≥ inline-tags-and-properties).
+//
+// The "Manage tags" dialog and its Settings-menu entry are gone. Every Details
+// tab now renders EntityTagsChips: a "TAGS <n>" heading with an "Add" text
+// button (TagAddMenu → TagPickerList in a v-menu), and the applied tags grouped
+// into Labels / Values / Inherited. A direct chip carries a ✕ (aria-label
+// "Remove <name>", shown on hover) that asks "Remove <name>?" in place; a
+// valued chip opens its value editor on click. Writes land immediately.
+//
+// Selectors lean on the component's own class names (.etc, .tag-chip,
+// .etc-group) where there is no role to hang them on: a chip is not a button,
+// and the groups are plain divs.
+// ---------------------------------------------------------------------------
+
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const exact = (s: string) => new RegExp(`^\\s*${esc(s)}\\s*$`);
+
+/** Select the Details tab of a warehouse / namespace / table / view page. The
+ *  warehouse page opens on "namespaces" and the namespace page on its child
+ *  list, and the tag chips only render on Details. Click-until-selected (the
+ *  Vuetify tab model resets while the page loads). No-op if there is no such
+ *  tab (e.g. already inside a details-only view). */
+export async function selectDetailsTab(page: Page) {
+  await selectTab(page, /^details$/i);
+}
+
+/** The EntityTagsChips block on screen. `.filter({visible})` because every tab
+ *  pane stays mounted (v-show), and a hidden pane's block would match first. */
+export function tagsSection(page: Page): Locator {
+  return page.locator('.etc').filter({ visible: true }).first();
+}
+
+/** An applied tag chip with exactly this name, inside `scope`. */
+export function tagChip(scope: Locator, name: string, kind: 'direct' | 'inherited' | 'any' = 'direct'): Locator {
+  const cls =
+    kind === 'direct'
+      ? '.tag-chip:not(.tag-chip--inherited)'
+      : kind === 'inherited'
+        ? '.tag-chip.tag-chip--inherited'
+        : '.tag-chip';
+  return scope
+    .locator(cls)
+    .filter({ has: scope.page().locator('.tag-chip__name', { hasText: exact(name) }) })
+    .first();
+}
+
+/** A tag group ("Labels", "Values", "Inherited") inside the tags section. */
+export function tagGroup(section: Locator, label: 'Labels' | 'Values' | 'Inherited'): Locator {
+  return section.locator('.etc-group').filter({
+    has: section.page().locator('.etc-label', { hasText: new RegExp(`^\\s*${label}`) }),
+  });
+}
+
+/** The full value text shown beside a valued chip in the "Values" group. */
+export function tagValueText(section: Locator, name: string): Locator {
+  return section
+    .locator('.etc-pair__name')
+    .filter({ has: section.page().locator('.tag-chip__name', { hasText: exact(name) }) })
+    .locator('xpath=following-sibling::div[1]');
+}
+
+/** Wait until the tags section has answered: its Add control is up (the
+ *  manage_tags check has returned) or, for a reader without it, the spinner is
+ *  gone. `requireAdd` fails the wait if the Add control never shows. */
+export async function waitForTagsSection(page: Page, opts: { requireAdd?: boolean } = {}) {
+  await selectDetailsTab(page);
+  const section = tagsSection(page);
+  await expect(section, 'the Details tab has no tags section').toBeVisible({ timeout: 20000 });
+  const add = section.getByRole('button', { name: /^add$/i }).first();
+  if (opts.requireAdd ?? true) await expect(add, 'the tags "Add" control never appeared').toBeVisible({ timeout: 20000 });
+  // Loading shows a lone spinner with no chips; let it go before reading chips.
+  await section.locator('.v-progress-circular').first().waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
+  return section;
+}
+
+/** The open tag picker menu (TagAddMenu or a chip's value editor). Identified by
+ *  what only it says: the picker's footer, or one of the add menu's states that
+ *  replace the list (none allowed / refused / still checking). */
+export function tagPickerMenu(page: Page): Locator {
+  return page
+    .locator('.v-overlay__content')
+    .filter({ visible: true })
+    .filter({
+      hasText:
+        /Changes apply immediately\.|None of the \d+ tags that fit here|not allowed to list the tags|Checking which tags you may apply/,
+    })
+    .last();
+}
+
+/** Click a menu activator until its menu is actually on screen. Just after a
+ *  navigation the button paints before its v-menu activator is wired, and that
+ *  first click opens nothing (same race the old cog-menu helper slept around). */
+async function openMenuVia(page: Page, trigger: Locator, menu: Locator, what: string) {
   await page.waitForLoadState('networkidle').catch(() => {});
-  await page.waitForTimeout(1500);
-
-  await page.locator('button:has(.mdi-cog)').first().click();
-  await page.getByText('Manage tags', { exact: true }).click();
-
-  // The resulting dialog's own fade-in transition briefly leaves its scrim
-  // overlay intercepting clicks on elements inside it. The scrim only carries
-  // a detectable "entering" class for the duration of the transition itself,
-  // so waiting for that class to disappear is racy — a flat settle wait is
-  // more reliable here (same pragmatic tradeoff as the cog-menu wait above).
-  await page.waitForTimeout(1000);
+  for (let i = 0; i < 5; i++) {
+    if (await menu.isVisible().catch(() => false)) break;
+    await trigger.click({ timeout: 5000 }).catch(() => {});
+    await menu.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+  }
+  await expect(menu, `${what} never opened`).toBeVisible({ timeout: 5000 });
 }
 
-/** Locate the open "Manage tags" dialog. It is fullscreen since 0.23 (toolbar,
- *  a two-column panel, Close), but the cog's v-menu can still linger open beside
- *  it — a Vuetify nested-overlay quirk — so every lookup stays scoped here rather
- *  than searching the page and hitting the stray menu. */
-function manageTagsDialog(page: Page) {
-  return page.locator('.v-overlay__content').filter({ hasText: 'Manage tags' }).last();
+/** Wait out "Checking which tags you may apply…" — until every candidate's
+ *  per-tag rights have answered, the list shows only what is known allowed. */
+export async function waitForTagRights(menu: Locator) {
+  await expect(menu.getByText('Checking which tags you may apply…')).toBeHidden({ timeout: 20000 });
 }
 
-/** A tag row in the dialog's right column ("ASSIGNED"). The component marks each
- *  card `tag-row--direct` or `tag-row--inherited`; matching on `.v-card` instead
- *  also catches the dialog's own card (and with it the toolbar's close button). */
-function assignedTagRow(page: Page, tagName: string) {
-  return manageTagsDialog(page).locator('.tag-row--direct').filter({ hasText: tagName }).first();
+/** Open the "Add" tag menu of the tags section on screen (Details tab). */
+export async function openTagAddMenu(page: Page): Promise<Locator> {
+  const section = await waitForTagsSection(page);
+  const menu = tagPickerMenu(page);
+  await openMenuVia(page, section.getByRole('button', { name: /^add$/i }).first(), menu, 'the tag Add menu');
+  await waitForTagRights(menu);
+  return menu;
 }
 
-/** The definitions offered in the dialog's left column ("AVAILABLE TAGS").
- *  Scoping by the column heading is brittle — the heading's own <div> carries
- *  the text but none of the rows. The two columns are different element kinds
- *  instead: available tags are v-list items, assigned tags are v-cards. */
-function availableTagRows(page: Page) {
-  return manageTagsDialog(page).getByRole('listitem');
+/** A definition row in an open picker (whether enabled or locked). Narrows the
+ *  list with the picker's search when it has one (it only shows over >1 row). */
+export async function pickerItem(page: Page, menu: Locator, tagName: string): Promise<Locator> {
+  const search = menu.getByPlaceholder('Filter tags', { exact: true });
+  if (await search.isVisible().catch(() => false)) await search.fill(tagName);
+  return menu
+    .locator('.v-list-item')
+    .filter({ has: page.locator('.v-list-item-title', { hasText: exact(tagName) }) })
+    .first();
 }
 
-/** Close the fullscreen "Manage tags" dialog and wait for its scrim to clear —
- *  a lingering overlay intercepts clicks on the page underneath. */
-async function closeManageTags(page: Page) {
-  const dialog = manageTagsDialog(page);
-  const close = dialog.getByRole('button', { name: /^close$/i }).last();
-  if (await close.isVisible().catch(() => false)) await close.click().catch(() => {});
+/** Whether the open picker offers this tag as applicable (listed AND not locked). */
+export async function pickerOffers(page: Page, menu: Locator, tagName: string): Promise<boolean> {
+  const item = await pickerItem(page, menu, tagName);
+  if (!(await item.isVisible({ timeout: 3000 }).catch(() => false))) return false;
+  return !(await item.evaluate((el) => el.classList.contains('v-list-item--disabled')).catch(() => true));
+}
+
+/** Pick a tag in an open picker: a marker applies on click; a free-text tag
+ *  expands a "Value" field + Assign; an enumerated one shows a chip per value. */
+export async function pickTag(page: Page, menu: Locator, tagName: string, value?: string) {
+  const item = await pickerItem(page, menu, tagName);
+  await expect(item, `the picker does not list ${tagName}`).toBeVisible({ timeout: 15000 });
+  await item.click();
+  if (!value) return;
+  const field = menu.getByPlaceholder('Value', { exact: true }).filter({ visible: true }).first();
+  if (await field.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await field.fill(value);
+    await menu.getByRole('button', { name: /^(assign|update)$/i }).first().click();
+  } else {
+    await menu.locator('.v-chip').filter({ hasText: exact(value) }).first().click();
+  }
+}
+
+/** Close an open picker with its "Done" button (the add menu deliberately
+ *  survives a click, so several tags can go on in one visit). */
+export async function closeTagMenu(page: Page, menu: Locator) {
+  if (!(await menu.isVisible().catch(() => false))) return;
+  const done = menu.getByRole('button', { name: /^done$/i }).first();
+  if (await done.isVisible().catch(() => false)) await done.click().catch(() => {});
   else await page.keyboard.press('Escape').catch(() => {});
-  await dialog.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
-  await page.locator('.v-overlay__scrim').first().waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+  await menu.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
 }
 
-/** Remove a direct (non-inherited) tag from the open "Manage tags" dialog, then
- *  close it. There is no type-to-confirm step any more: the ASSIGNED column's
- *  row carries a red close button that unassigns immediately ("Changes apply
- *  immediately", per the dialog's own footer). */
-export async function removeEntityTag(page: Page, tagName: string) {
-  // The assigned row is a v-card, not a table row — match the card holding the
-  // tag name and click its (only) destructive icon button.
-  const row = assignedTagRow(page, tagName);
-  await expect(row).toBeVisible({ timeout: 15000 });
-  // The row's own (red) close button unassigns. The dialog toolbar has an
-  // mdi-close too, which is why this is scoped to the row and not the dialog.
-  await row.locator('button:has(.mdi-close)').last().click();
-  // The panel reloads its lists after the write; the name must be gone from the
-  // ASSIGNED column before the dialog is closed, or a later re-open races it.
-  await expect(row).toBeHidden({ timeout: 15000 });
-  await closeManageTags(page);
-}
-
-/** Open the "Manage tags" dialog and apply a tag, optionally with a value.
- *
- *  The panel is two columns now: clicking a definition in AVAILABLE TAGS applies
- *  a MARKER straight away; a free-text / enumerated tag expands an inline value
- *  editor under the row instead (text field + Assign, or a chip per allowed
- *  value). There is no "Apply tag" button and no Save — writes land on click. */
+/**
+ * Apply a tag to the entity whose page is on screen, inline on its Details tab
+ * (warehouse, namespace, table, view or generic table — the tab is selected
+ * here). Idempotent: combos share backend state, so a marker that is already
+ * applied is left alone, and an already-applied valued tag has its value set
+ * through the chip instead (the add picker locks applied tags).
+ */
 export async function applyEntityTag(page: Page, opts: { tagName: string; value?: string }) {
-  await openManageTagsMenu(page);
-
-  const dialog = manageTagsDialog(page);
-  const assignedCard = assignedTagRow(page, opts.tagName);
-
-  // The available column defaults to "Not assigned", so a tag already applied to
-  // this entity is filtered out of it. Combos share backend state and these
-  // helpers are idempotent, so widen to "All" before looking for the definition.
-  await dialog.getByRole('button', { name: 'All', exact: true }).first().click().catch(() => {});
-  await page.waitForTimeout(500);
-
-  const definitionRow = availableTagRows(page).filter({ hasText: opts.tagName }).first();
-  await expect(definitionRow).toBeVisible({ timeout: 15000 });
-
-  // Clicking a MARKER that is already assigned UNASSIGNS it (the row is a toggle),
-  // so an idempotent apply has to check first. A valued tag re-opens its editor
-  // instead, which is safe to redo.
-  const alreadyAssigned = await assignedCard.isVisible({ timeout: 2000 }).catch(() => false);
-  if (alreadyAssigned && !opts.value) {
-    await closeManageTags(page);
+  const section = await waitForTagsSection(page);
+  const chip = tagChip(section, opts.tagName);
+  if (await chip.isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (opts.value) await setEntityTagValue(page, opts.tagName, opts.value);
     return;
   }
+  const menu = await openTagAddMenu(page);
+  await pickTag(page, menu, opts.tagName, opts.value);
+  // The write lands on click; the chip appearing is the confirmation.
+  await expect(tagChip(section, opts.tagName)).toBeVisible({ timeout: 15000 });
+  await closeTagMenu(page, menu);
+}
 
-  await definitionRow.click();
-
-  if (opts.value) {
-    // Free text: the inline editor's field has no label, only a "Value"
-    // placeholder. Enumerated: the allowed values render as clickable chips.
-    const valueField = dialog.getByPlaceholder('Value').filter({ visible: true }).first();
-    if (await valueField.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await valueField.fill(opts.value);
-      await dialog.getByRole('button', { name: /^(assign|update)$/i }).first().click();
-    } else {
-      await dialog.getByRole('button', { name: opts.value, exact: true }).first().click();
-    }
+/** Change the value of an applied free-text / enumerated tag by clicking its chip. */
+export async function setEntityTagValue(page: Page, tagName: string, value: string) {
+  const section = await waitForTagsSection(page);
+  const chip = tagChip(section, tagName);
+  await expect(chip).toBeVisible({ timeout: 15000 });
+  // The editor is a one-row TagPickerList (no search), but it has the footer.
+  const editor = tagPickerMenu(page);
+  await openMenuVia(page, chip.locator('.tag-chip__name'), editor, `the value editor of ${tagName}`);
+  const field = editor.getByPlaceholder('Value', { exact: true }).first();
+  if (await field.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await field.fill(value);
+    await editor.getByRole('button', { name: /^(update|assign)$/i }).first().click();
+  } else {
+    await editor.locator('.v-chip').filter({ hasText: exact(value) }).first().click();
   }
+  // The editor closes itself on apply; the new value shows beside the chip.
+  await editor.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
+  await expect(tagValueText(section, tagName)).toHaveText(exact(value), { timeout: 15000 });
+}
 
-  // The write is confirmed by the tag turning up in the ASSIGNED column.
-  await expect(assignedCard).toBeVisible({ timeout: 15000 });
-  await closeManageTags(page);
+/** Open the in-place "Remove <name>?" confirm of a direct chip inside `scope`
+ *  (the ✕ is invisible until the chip is hovered). Returns the confirm. */
+export async function openRemoveTagConfirm(page: Page, scope: Locator, tagName: string): Promise<Locator> {
+  const chip = tagChip(scope, tagName);
+  await expect(chip).toBeVisible({ timeout: 15000 });
+  const confirm = page
+    .locator('.v-overlay__content')
+    .filter({ visible: true })
+    .filter({ has: page.getByRole('button', { name: 'Remove', exact: true }) })
+    .filter({ hasText: tagName })
+    .last();
+  for (let i = 0; i < 5 && !(await confirm.isVisible().catch(() => false)); i++) {
+    await chip.hover().catch(() => {});
+    await chip.locator(`[aria-label="Remove ${tagName}"]`).click({ timeout: 5000 }).catch(() => {});
+    await confirm.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+  }
+  await expect(confirm, `the remove confirm for ${tagName} never opened`).toBeVisible({ timeout: 5000 });
+  return confirm;
+}
+
+/** Remove a direct chip inside `scope` (✕ → confirm → Remove). No-op when absent. */
+export async function removeTagChip(page: Page, scope: Locator, tagName: string) {
+  const chip = tagChip(scope, tagName);
+  if (!(await chip.isVisible({ timeout: 3000 }).catch(() => false))) return;
+  const confirm = await openRemoveTagConfirm(page, scope, tagName);
+  await confirm.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(chip).toBeHidden({ timeout: 15000 });
+}
+
+/** Remove a direct tag from the entity on screen, inline on its Details tab.
+ *  Idempotent: a tag that is not applied is a no-op. */
+export async function removeEntityTag(page: Page, tagName: string) {
+  const section = await waitForTagsSection(page);
+  await removeTagChip(page, section, tagName);
+}
+
+// ---- column tags (table Schema tab, TableColumnProfiler) -------------------
+
+/** The Schema-tab row of a column (dotted path for struct fields). Keyed on the
+ *  row's compact "+" (aria-label "Add tag to <path>"), which every taggable row
+ *  has whether or not it carries tags. */
+export function columnRow(page: Page, path: string): Locator {
+  return page
+    .locator('tr')
+    .filter({ visible: true })
+    .filter({ has: page.locator(`[aria-label="Add tag to ${path}"]`) })
+    .first();
+}
+
+/** Apply a tag to one column on the Schema tab (which must be on screen). */
+export async function applyColumnTag(page: Page, path: string, tagName: string, value?: string) {
+  const row = columnRow(page, path);
+  await expect(row, `no taggable schema row for ${path}`).toBeVisible({ timeout: 20000 });
+  if (await tagChip(row, tagName).isVisible({ timeout: 2000 }).catch(() => false)) return;
+  // The "+" only fades in on row hover (it is laid out and clickable either way).
+  await row.hover().catch(() => {});
+  const menu = tagPickerMenu(page);
+  await openMenuVia(page, row.locator(`[aria-label="Add tag to ${path}"]`), menu, `the column tag menu of ${path}`);
+  await waitForTagRights(menu);
+  await pickTag(page, menu, tagName, value);
+  await expect(tagChip(columnRow(page, path), tagName)).toBeVisible({ timeout: 15000 });
+  await closeTagMenu(page, menu);
+}
+
+/** Remove a tag from one column on the Schema tab. No-op when absent. */
+export async function removeColumnTag(page: Page, path: string, tagName: string) {
+  await removeTagChip(page, columnRow(page, path), tagName);
 }

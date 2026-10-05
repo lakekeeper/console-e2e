@@ -312,3 +312,33 @@ export async function bulkDeleteTables(page: Page, names: string[]) {
   await expect(dialog.getByRole('button', { name: /^close$/i })).toBeVisible({ timeout: 30000 });
   await dialog.getByRole('button', { name: /^close$/i }).click();
 }
+
+/** Make sure a table exists in the namespace page on screen, creating it through
+ *  the Create Table dialog when missing. addTable is not idempotent on its own,
+ *  and a retry reuses its per-test project — so look first. */
+export async function ensureTable(page: Page, tbl: string, field = 'a') {
+  if (/\/namespace\//.test(page.url())) await selectTab(page, /^tables$/i);
+  const existing = page.getByRole('row', { name: new RegExp(`\\b${tbl}\\b`) }).first();
+  if (await existing.isVisible({ timeout: 4000 }).catch(() => false)) return;
+  await addTable(page, tbl, field);
+}
+
+/** Open a table from the namespace page's Tables tab. The name also sits in the
+ *  nav tree (which does not navigate), so take the last match and click until
+ *  the route changes — the same pattern as openNamespace. */
+export async function openTable(page: Page, tbl: string) {
+  if (/\/namespace\//.test(page.url()) && !/\/table\//.test(page.url())) await selectTab(page, /^tables$/i);
+  const target = new RegExp(`/table/[^/?#]+`);
+  const cell = page.getByText(tbl, { exact: true }).filter({ visible: true }).last();
+  for (let i = 0; i < 5 && !target.test(page.url()); i++) {
+    // A just-created table may not be in the list the page mounted with.
+    if (i === 2) {
+      await page.reload().catch(() => {});
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await selectTab(page, /^tables$/i);
+    }
+    await cell.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForURL(target, { timeout: 6000 }).catch(() => {});
+  }
+  await expect(page).toHaveURL(target, { timeout: 10000 });
+}

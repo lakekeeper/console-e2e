@@ -151,3 +151,32 @@ export async function seedTagDefinitions(
     },
   );
 }
+
+/** A namespace's id (grants and tags address it by id, the catalog by name). */
+export async function namespaceIdOf(page: Page, warehouseId: string, namespace: string): Promise<string> {
+  const res = await page.request.get(
+    `${API()}/catalog/v1/${warehouseId}/namespaces/${encodeURIComponent(namespace)}`,
+    { headers: await headers(page, false) },
+  );
+  if (!res.ok()) fail(`read namespace ${namespace}`, res, await res.text());
+  const id = (await res.json())?.properties?.namespace_id || '';
+  if (!id) throw new Error(`seed: namespace ${namespace} has no namespace_id`);
+  return id;
+}
+
+/** Apply marker tags to a namespace (PUT is an upsert, so this is idempotent). */
+export async function applyNamespaceTags(
+  page: Page,
+  warehouseId: string,
+  namespaceId: string,
+  tagNames: string[],
+) {
+  const h = await headers(page);
+  await inBatches(tagNames, async (name) => {
+    const res = await page.request.put(
+      `${API()}/management/v1/warehouse/${warehouseId}/namespace/${namespaceId}/tags/${encodeURIComponent(name)}`,
+      { headers: h, data: {} },
+    );
+    if (!res.ok()) fail(`tag namespace with ${name}`, res, await res.text());
+  });
+}
