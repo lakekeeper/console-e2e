@@ -6,13 +6,25 @@
  * Reads results/<app>-<mode>.json (Playwright JSON reporter output; one file per
  * combo, overwritten only when that combo runs) and renders DASHBOARD.html.
  * Each column header shows when that combo last ran, so stale cells are visible.
+ *
+ * Archive mode: `--results <dir> --out <file>` renders a FROZEN dashboard for one
+ * history run (run.mjs does this into history/<stamp>/dashboard.html; see also
+ * history-backfill.mjs). No auto-refresh, no live banner; columns link into the
+ * run's merged report sitting next to it.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const resultsDir = path.join(dir, 'results');
+const argOf = (name) => {
+  const i = process.argv.indexOf(name);
+  return i > -1 ? process.argv[i + 1] : undefined;
+};
+const outFile = argOf('--out') ? path.resolve(argOf('--out')) : path.join(dir, 'DASHBOARD.html');
+const archived = !!argOf('--out');
+const runName = archived ? path.basename(path.dirname(outFile)) : '';
+const resultsDir = argOf('--results') ? path.resolve(argOf('--results')) : path.join(dir, 'results');
 const files = fs.existsSync(resultsDir)
   ? fs.readdirSync(resultsDir).filter((f) => f.endsWith('.json') && f !== 'current.json' && !f.startsWith('unit'))
   : []; // current.json (live marker) + unit*.json (component unit tests) are not combos
@@ -21,7 +33,7 @@ const files = fs.existsSync(resultsDir)
 // every run and never auto-prunes them. Offer them in a dropdown so past runs stay
 // browsable (no need to delete artifacts to keep the view clean). Newest first.
 const historyDir = path.join(dir, 'history');
-const runs = fs.existsSync(historyDir)
+const runs = !archived && fs.existsSync(historyDir)
   ? fs
       .readdirSync(historyDir, { withFileTypes: true })
       .filter((d) => d.isDirectory() && fs.existsSync(path.join(historyDir, d.name, 'index.html')))
@@ -62,6 +74,26 @@ function walk(suite, combo, fileHint) {
   for (const s of suite.suites || []) walk(s, combo, file);
 }
 
+// Which Lakekeeper + UI a column tested. New results carry it in config.metadata
+// (set by run.mjs → playwright.config); older ones are inferred from the combo name
+// the way run.mjs picked images: served-UI = plus image, npm cedar = plus image,
+// any other npm combo = OSS image.
+function underTest(combo, meta) {
+  let backend = meta.backend || '';
+  let ui = meta.ui || '';
+  if (!backend)
+    backend =
+      combo.startsWith('docker-') || /-cedar(-|$)/.test(combo)
+        ? 'image lakekeeper-plus (inferred)'
+        : 'image catalog OSS (inferred)';
+  if (!ui) {
+    const app = combo.match(/^(docker-)?(console-plus|console)/);
+    ui = combo.startsWith('docker-') ? `embedded ${app?.[2] || 'console-plus'}` : `${app?.[2] || '?'} (vite dev)`;
+  }
+  const edition = /lakekeeper-plus|lakekeeper-enterprise|vakamo/.test(backend) ? 'Plus' : 'OSS';
+  return { backend, ui, edition };
+}
+
 for (const f of files) {
   const combo = f.replace(/\.json$/, '');
   let data;
@@ -70,7 +102,15 @@ for (const f of files) {
   } catch {
     continue;
   }
-  combos[combo] = { startTime: data.stats?.startTime || null, tests: new Map() };
+  const meta = data.config?.metadata || {};
+  combos[combo] = {
+    startTime: data.stats?.startTime || null,
+    tests: new Map(),
+    // Project name inside the merged report — differs from the file name for
+    // results renamed after the run (e.g. old docker-<mode> → docker-console-<mode>).
+    project: data.config?.projects?.[0]?.name || combo,
+    ...underTest(combo, meta),
+  };
   for (const s of data.suites || []) walk(s, combo, null);
 }
 
@@ -161,9 +201,18 @@ const header =
       const cls = t.f ? 'colfail' : 'colok';
       // Link the column to that combo's NATIVE Playwright report (drill into
       // traces/video/screenshots). Served from the same dir as this dashboard.
-      const link = `reports/${c}/index.html`;
+      // Archived: per-combo reports are not kept, so filter the merged one by project.
+      // Archived: per-combo reports exist only where copied in (archives from before
+      // the blob fix, whose merged report holds just the last combo); otherwise
+      // filter the merged report to the combo's project.
+      const link = !archived
+        ? `reports/${c}/index.html`
+        : fs.existsSync(path.join(path.dirname(outFile), 'reports', c, 'index.html'))
+          ? `reports/${c}/index.html`
+          : `index.html#?q=p:${encodeURIComponent(combos[c].project)}`;
       const label = MODE_LABEL[modeOf(c)] || '';
-      return `<th class="${cls}"><a href="${link}" target="_blank" title="Open ${esc(c)} Playwright report">${esc(c)} ↗</a><div class="meta">${esc(label)}<br>${t.p}✅ ${t.f}❌${t.k ? ` ${t.k}⚠️` : ''}${t.s ? ` ${t.s}➖` : ''} · ${fmt(combos[c].startTime)}</div></th>`;
+      const { edition, backend, ui } = combos[c];
+      return `<th class="${cls}"><div class="ed ed-${edition.toLowerCase()}" title="${esc(backend)}">LK ${edition}</div><a href="${link}" target="_blank" title="Open ${esc(c)} Playwright report">${esc(c)} ↗</a><div class="meta">${esc(ui)}<br><span title="${esc(backend)}">${esc(backend.replace(/^(binary|image) .*\//, '$1 …/'))}</span><br>${esc(label)}<br>${t.p}✅ ${t.f}❌${t.k ? ` ${t.k}⚠️` : ''}${t.s ? ` ${t.s}➖` : ''} · ${fmt(combos[c].startTime)}</div></th>`;
     })
     .join('') +
   `</tr>`;
@@ -188,7 +237,7 @@ const totalF = comboNames.reduce((a, c) => a + tally(c).f, 0);
 // Run-in-progress state (run.mjs sets these while a run is active). When running,
 // refresh faster and show a clear "in progress" banner so the matrix isn't
 // mistaken for the final result.
-const running = !!process.env.RUN_IN_PROGRESS;
+const running = !archived && !!process.env.RUN_IN_PROGRESS;
 const runCurrent = process.env.RUN_CURRENT || '';
 const refreshSecs = running ? 8 : 60;
 const runBanner = running
@@ -210,8 +259,8 @@ const livePoll = running
 </script>`
   : '';
 
-const html = `<!doctype html><meta charset="utf-8"><title>Test Matrix Dashboard</title>
-<meta http-equiv="refresh" content="${refreshSecs}">
+const html = `<!doctype html><meta charset="utf-8"><title>${archived ? `Run ${esc(runName)}` : 'Test Matrix Dashboard'}</title>
+${archived ? '' : `<meta http-equiv="refresh" content="${refreshSecs}">`}
 <style>
  body{font:13px/1.45 system-ui,sans-serif;margin:1.5rem;color:#1a1a2e}
  h1{margin:0 0 .25rem} .sub{color:#667;margin:0 0 1rem}
@@ -227,6 +276,10 @@ const html = `<!doctype html><meta charset="utf-8"><title>Test Matrix Dashboard<
  .colfail{background:#fdecec} .colok{background:#eefaf0}
  .filerow td{background:#f0f0f7;font-family:ui-monospace,monospace;color:#556;font-weight:600;position:sticky;left:0}
  .p{} .f{} .k{} .s{} .na{color:#cfd2dd}
+ .ed{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px;margin-bottom:3px}
+ .ed-oss{background:#e3efff;color:#1d4ed8} .ed-plus{background:#f3e8ff;color:#7e22ce}
+ .ut{padding:.5rem 1rem;border:1px solid #e3e3ef;border-radius:8px;margin-bottom:1rem;font-size:12px}
+ .ut code{font-size:11px}
  .banner{padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-weight:600}
  .green{background:#eefaf0;color:#1a7d44} .red{background:#fdecec;color:#b32020}
  .run{background:#ffe08a;color:#6b4500;border:3px solid #f0a500;border-radius:12px;
@@ -242,16 +295,36 @@ const html = `<!doctype html><meta charset="utf-8"><title>Test Matrix Dashboard<
  .rp-note{color:#778;margin-left:.5rem}
  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(240,165,0,.55)}50%{box-shadow:0 0 0 10px rgba(240,165,0,0)}}
 </style>
-<h1>Test Matrix Dashboard</h1>
-<p class="sub">Every test × every app·mode. Latest result per combo (accumulates across runs — partial runs only update their own columns). Auto-refreshes every 30s. ✅ pass · ❌ fail · ⚠️ flaky · ➖ skipped/n-a · · not run in that mode.<br>
-Click a <b>combo column ↗</b> to open its native Playwright report (traces/video). Full merged report: <a href="playwright-report/index.html" target="_blank">playwright-report ↗</a>.</p>
+<h1>${archived ? `Archived run <code>${esc(runName)}</code>` : 'Test Matrix Dashboard'}</h1>
+${
+  archived
+    ? `<p class="sub">Frozen snapshot of this run's combos only. ✅ pass · ❌ fail · ⚠️ flaky · ➖ skipped/n-a · · not run in that mode.<br>
+Click a <b>combo column ↗</b> to filter this run's Playwright report to it. Full report: <a href="index.html" target="_blank">index.html ↗</a> · <a href="../../DASHBOARD.html">latest dashboard</a>.</p>`
+    : `<p class="sub">Every test × every app·mode. Latest result per combo (accumulates across runs — partial runs only update their own columns). Auto-refreshes every 30s. ✅ pass · ❌ fail · ⚠️ flaky · ➖ skipped/n-a · · not run in that mode.<br>
+Click a <b>combo column ↗</b> to open its native Playwright report (traces/video). Full merged report: <a href="playwright-report/index.html" target="_blank">playwright-report ↗</a>.</p>`
+}
 ${
   runs.length
     ? `<div class="runpick">📂 <b>Browse an archived run:</b>
 <select onchange="if(this.value)window.open(this.value,'_blank')">
 <option value="">— pick one of ${runs.length} archived runs —</option>
-${runs.map((r) => `<option value="history/${encodeURIComponent(r)}/index.html">${esc(r)}</option>`).join('')}
-</select><span class="rp-note">each run's full report is kept until you delete it (<code>just test-history</code> / <code>test-history-keep</code>).</span></div>`
+${runs
+  .map((r) => {
+    // Prefer the run's frozen dashboard; older archives only have the report.
+    const hasDash = fs.existsSync(path.join(historyDir, r, 'dashboard.html'));
+    return `<option value="history/${encodeURIComponent(r)}/${hasDash ? 'dashboard.html' : 'index.html'}">${esc(r)}${hasDash ? '' : ' (report only)'}</option>`;
+  })
+  .join('')}
+</select><span class="rp-note">each run's dashboard + full report is kept until you delete it (<code>just test-history</code> / <code>test-history-keep</code>).</span></div>`
+    : ''
+}
+${
+  comboNames.length
+    ? `<div class="ut"><b>Under test:</b> ${[
+        ...new Map(comboNames.map((c) => [`${combos[c].edition}|${combos[c].backend}|${combos[c].ui}`, combos[c]])).values(),
+      ]
+        .map((u) => `<span class="ed ed-${u.edition.toLowerCase()}">LK ${u.edition}</span> <code>${esc(u.backend)}</code> · ${esc(u.ui)}`)
+        .join('<br>')}</div>`
     : ''
 }
 ${runBanner}<div class="banner ${totalF ? 'red' : 'green'}">${totalF ? `❌ ${totalF} failing across the matrix` : `✅ all ${totalP} executed checks green`} — ${comboNames.length} combos.</div>
@@ -269,5 +342,5 @@ ${
 ${comboNames.length ? `<div class="tablewrap"><table>${header}${rows}</table></div>` : '<p>No results yet — run <code>just test-matrix</code>.</p>'}
 ${livePoll}`;
 
-fs.writeFileSync(path.join(dir, 'DASHBOARD.html'), html);
-console.log(`Matrix dashboard → console-e2e/DASHBOARD.html (${comboNames.length} combos, ${testKeys.length} tests, ${totalF} failing)`);
+fs.writeFileSync(outFile, html);
+console.log(`Matrix dashboard → ${path.relative(dir, outFile)} (${comboNames.length} combos, ${testKeys.length} tests, ${totalF} failing)`);

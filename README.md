@@ -129,6 +129,8 @@ All recipes are namespaced `test-`:
 | `just test-ui [app] [mode]` | Playwright UI to browse/run tests (needs `test-up` first) |
 | `just test-history` | list archived runs (timestamped, kept until you delete them) |
 | `just test-history-keep <n>` | prune to the newest N archives |
+| `just test-dashboard-at <run>` | open an archived run's frozen dashboard |
+| `just test-history-backfill` | build dashboards for archives that predate dashboard snapshots |
 | `just test-down` | tear the stack down |
 
 ---
@@ -145,8 +147,14 @@ All recipes are namespaced `test-`:
   screenshot of every step (e.g. the CORS test's `:3001` result vs `:3002` error box).
 - **`just test-catalog`** → `TEST-CATALOG.md`/`.html`: what test cases exist, ordered
   by journey — a planning view that needs no run.
-- **History**: every full run is archived under `history/<timestamp>__<scope>` and
-  kept until you delete it (`just test-history`, `test-history-keep`).
+- **History**: every run is archived under `history/<timestamp>__<scope>` — its
+  merged report (`index.html`) plus a frozen matrix of that run's combos
+  (`dashboard.html`, built from the snapshot in `results/`). Kept until you delete
+  it (`just test-history`, `test-history-keep`, `test-history-prune`); open one with
+  `just test-dashboard-at <run>`. `just test-history-backfill` gives archives from
+  before this a dashboard. Served-UI runs name combos `docker-console-<mode>` /
+  `docker-console-plus-<mode>` (after `--app`), so OSS and Plus binaries get separate
+  columns — pass `KEEP_RESULTS=1` to the second run to see both on the live dashboard.
 
 ---
 

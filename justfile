@@ -74,9 +74,19 @@ test-catalog:
 test-dashboard:
     node dashboard.mjs && python3 -m http.server 9325 --bind 127.0.0.1 --directory . >/dev/null 2>&1 & sleep 1 && echo "→ http://127.0.0.1:9325/DASHBOARD.html"
 
+# Each archive holds the run's merged report (index.html) + frozen matrix (dashboard.html).
 # List archived runs (each kept until YOU delete it).
 test-history:
     @ls -1t history 2>/dev/null || echo "no runs yet — run `just test-matrix`"
+
+# Open an archived run's dashboard, e.g. `just test-dashboard-at <run from test-history>`
+test-dashboard-at run:
+    python3 -m http.server 9325 --bind 127.0.0.1 --directory . >/dev/null 2>&1 & sleep 1 && echo "→ http://127.0.0.1:9325/history/{{run}}/dashboard.html"
+
+# Uses the report data embedded in their index.html; skips archives that have one.
+# Build dashboard.html for archives that predate dashboard snapshots.
+test-history-backfill:
+    node history-backfill.mjs
 
 # Open a specific archived run, e.g. `just test-report-at 2026-06-28T10-30-00__full`
 test-report-at run:

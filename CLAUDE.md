@@ -25,7 +25,12 @@ browser**. Read [README.md](README.md) first for the user-facing overview.
   journeys by area.
 - **`dashboard.mjs` / `catalog.mjs`** — build `DASHBOARD.html` / `TEST-CATALOG`.
   `reporters/current.mjs` writes `results/current.json` (live test name for the
-  dashboard banner).
+  dashboard banner). Each run's archive `history/<stamp>/` gets that run's
+  `results/` snapshot + a frozen `dashboard.html` (`dashboard.mjs --results --out`);
+  `history-backfill.mjs` rebuilds them for older archives from the report's embedded zip.
+- **Blob merge needs `PWTEST_BLOB_DO_NOT_REMOVE=1`** (set in `runPlaywright`) — the
+  blob reporter otherwise wipes `blob-report/` per combo and the merged report holds
+  only the last one.
 
 ## Conventions
 

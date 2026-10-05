@@ -114,6 +114,8 @@ const apps = servedUI ? ['docker'] : (opt('--app') || ALL_APPS.join(',')).split(
 // Policies tab shows a Lakekeeper+ teaser; the Plus app renders the real Cedar
 // pane). APP alone says 'docker', so pass the flavour separately.
 const servedApp = servedUI ? opt('--app') || 'console-plus' : '';
+// Result/report name prefix — must match `comboApp` in playwright.config.ts.
+const comboApp = (app) => (servedUI ? `docker-${servedApp}` : app);
 const modes = (opt('--mode') || ALL_MODES.join(',')).split(',').filter(Boolean);
 const extraGrep = opt('--grep');
 const keep = has('--keep');
@@ -319,7 +321,10 @@ function runPlaywright(app, mode, browser = 'chromium') {
     const child = spawn('npx', pwArgs, {
       cwd: dir,
       stdio: 'inherit',
-      env: { ...env, APP: app, SERVED_APP: servedApp, TEST_MODE: mode, BROWSER: browser },
+      // PWTEST_BLOB_DO_NOT_REMOVE: the blob reporter empties blob-report/ on every
+      // start, so without it the merged report (and its archive) held only the
+      // LAST combo. The dir is cleared once per invocation below instead.
+      env: { ...env, APP: app, SERVED_APP: servedApp, TEST_MODE: mode, BROWSER: browser, PWTEST_BLOB_DO_NOT_REMOVE: '1' },
     });
     child.on('exit', (code) => resolve(code ?? 1));
   });
@@ -381,17 +386,19 @@ fs.rmSync(path.join(dir, 'test-results'), { recursive: true, force: true });
 // --keep-results (or KEEP_RESULTS=1) to preserve combos this invocation will not
 // touch — the case where the npm matrix and the docker matrix are meant to sit
 // side by side.
+// Combos this invocation produces — also selects what gets snapshotted into the
+// run's history archive.
+const willRun = new Set();
+for (const app of apps)
+  for (const mode of modes) if (servedUI || APP_MODES[app]?.includes(mode)) willRun.add(`${comboApp(app)}-${mode}`);
+const comboOfResult = (f) => f.replace(/\.json$/, '').replace(/-dark$/, '').replace(/-(firefox|webkit)$/, '');
 if (!upOnly) {
   const keepOthers = env.KEEP_RESULTS === '1' || process.argv.includes('--keep-results');
-  const willRun = new Set();
-  for (const app of apps)
-    for (const mode of modes) if (servedUI || APP_MODES[app]?.includes(mode)) willRun.add(`${app}-${mode}`);
   const resultsDir = path.join(dir, 'results');
   let cleared = 0;
   for (const f of fs.existsSync(resultsDir) ? fs.readdirSync(resultsDir) : []) {
     if (!f.endsWith('.json') || f.startsWith('unit') || f === 'current.json') continue;
-    const base = f.replace(/\.json$/, '').replace(/-(firefox|webkit)$/, '');
-    if (!keepOthers || willRun.has(base)) {
+    if (!keepOthers || willRun.has(comboOfResult(f))) {
       fs.rmSync(path.join(resultsDir, f), { force: true });
       cleared++;
     }
@@ -427,6 +434,8 @@ for (const app of apps) {
         ? env.LK_IMAGE_PLUS
         : env.LK_IMAGE_OSS;
     const stackEnv = { TEST_MODE: mode, LK_IMAGE: lkImage };
+    // What the dashboard labels this column with (playwright.config metadata).
+    env.E2E_BACKEND = LK_BIN ? `binary ${LK_BIN.replace(os.homedir(), '~')}` : `image ${lkImage}`;
 
     console.log(`\n${'='.repeat(70)}\n▶ ${app} · ${mode}  (image: ${lkImage})\n${'='.repeat(70)}`);
 
@@ -577,14 +586,30 @@ if (fs.existsSync(path.join(dir, 'blob-report'))) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const scope =
     extraGrep || apps.length < ALL_APPS.length || modes.length < ALL_MODES.length
-      ? `partial-${apps.join('+')}-${modes.join('+')}`
+      ? `partial-${apps.map(comboApp).join('+')}-${modes.join('+')}`
       : 'full';
   const archive = path.join(dir, 'history', `${stamp}__${scope}`);
   fs.mkdirSync(path.join(dir, 'history'), { recursive: true });
   fs.cpSync(path.join(dir, 'playwright-report'), archive, { recursive: true });
 
+  // Snapshot THIS run's results (not combos kept from earlier runs) next to its
+  // report and render a frozen dashboard from them. Lives inside the archive dir,
+  // so test-history / test-history-keep / test-history-prune cover it too.
+  const archivedResults = path.join(archive, 'results');
+  fs.mkdirSync(archivedResults, { recursive: true });
+  for (const f of fs.readdirSync(path.join(dir, 'results'))) {
+    if (!f.endsWith('.json') || f === 'current.json') continue;
+    if (f.startsWith('unit') ? unitResults.length : willRun.has(comboOfResult(f)))
+      fs.copyFileSync(path.join(dir, 'results', f), path.join(archivedResults, f));
+  }
+  spawnSync('node', ['dashboard.mjs', '--results', archivedResults, '--out', path.join(archive, 'dashboard.html')], {
+    cwd: dir,
+    stdio: 'inherit',
+    env,
+  });
+
   console.log(`📊 Latest report: e2e/playwright-report/  →  just test-report`);
-  console.log(`🗄  Archived run:  e2e/history/${stamp}__${scope}/  (kept until you delete it)`);
+  console.log(`🗄  Archived run:  e2e/history/${stamp}__${scope}/  (report + dashboard, kept until you delete it)`);
 
   // Rebuild the accumulating matrix dashboard from results/ (one JSON per combo;
   // partial runs only update their own columns — the matrix never shrinks).

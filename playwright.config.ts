@@ -43,7 +43,11 @@ const theme: 'light' | 'dark' = process.env.THEME === 'dark' ? 'dark' : 'light';
 // Combo key: chromium uses app-mode; firefox/webkit append the browser so their
 // results land in their own columns/report.
 const themeSuffix = theme === 'dark' ? '-dark' : '';
-const combo = (isCross ? `${app}-${mode}-${browser}` : `${app}-${mode}`) + themeSuffix;
+// Served-UI runs pass APP=docker; name the combo after the embedded app too, so an
+// OSS-binary run and a Plus-binary run land in separate columns instead of
+// overwriting each other's docker-<mode> results.
+const comboApp = servedUI ? `docker-${process.env.SERVED_APP || 'console-plus'}` : app;
+const combo = (isCross ? `${comboApp}-${mode}-${browser}` : `${comboApp}-${mode}`) + themeSuffix;
 
 // Resolve which app to serve.
 const appDir =
@@ -66,6 +70,12 @@ for (const [k, v] of Object.entries(modeEnv)) {
 
 export default defineConfig({
   testDir: './specs',
+  // Lands in the JSON results (config.metadata) so the dashboard can say which
+  // Lakekeeper (binary path or image) and which UI each column actually tested.
+  metadata: {
+    backend: process.env.E2E_BACKEND || '',
+    ui: servedUI ? `embedded ${process.env.SERVED_APP || 'console-plus'}` : `${app} (vite dev)`,
+  },
   // Parallel ACROSS files, serial WITHIN one: several specs tell an ordered
   // story inside a file (access-control grants then reads, then revokes in
   // afterEach), and per-test projects isolate files from each other but not a
