@@ -61,10 +61,10 @@ test.describe('inline tags @authn @authz @cedar', () => {
       await applyEntityTag(page, { tagName: text, value: 'alpha' });
     });
 
-    await test.step('3 · a marker is a Label, a valued tag is a Value with its text beside it', async () => {
+    await test.step('3 · a marker is a Classification chip, a free-text tag is a Free text entry with its text under it', async () => {
       const section = tagsSection(page);
-      const labels = tagGroup(section, 'Markers');
-      const values = tagGroup(section, 'Values');
+      const labels = tagGroup(section, 'Classifications');
+      const values = tagGroup(section, 'Free text');
       await expect(tagChip(labels, marker)).toBeVisible({ timeout: 15000 });
       await expect(labels.locator('.etc-count')).toHaveText('1');
       await expect(tagChip(values, text)).toBeVisible();
@@ -107,9 +107,9 @@ test.describe('inline tags @authn @authz @cedar', () => {
     await test.step('7 · ✕ → Remove takes it off; an emptied group disappears', async () => {
       await removeEntityTag(page, marker);
       const section = tagsSection(page);
-      await expect(tagGroup(section, 'Markers')).toHaveCount(0);
+      await expect(tagGroup(section, 'Classifications')).toHaveCount(0);
       await removeEntityTag(page, text);
-      await expect(tagGroup(section, 'Values')).toHaveCount(0);
+      await expect(tagGroup(section, 'Free text')).toHaveCount(0);
       await expect(section.getByText('No tags', { exact: true })).toBeVisible({ timeout: 10000 });
     });
   });

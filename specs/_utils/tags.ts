@@ -118,9 +118,10 @@ export function tagDefinitionIdFromUrl(page: Page): string {
 // The "Manage tags" dialog and its Settings-menu entry are gone. Every Details
 // tab now renders EntityTagsChips: a "TAGS <n>" heading with an "Add" text
 // button (TagAddMenu → TagPickerList in a v-menu), and the applied tags grouped
-// into Markers / Values / Inherited. A direct chip carries a ✕ (aria-label
-// "Remove <name>", shown on hover) that asks "Remove <name>?" in place; a
-// valued chip opens its value editor on click. Writes land immediately.
+// into Classifications (markers and enumerated tags as chips) / Free text / Inherited.
+// A chip carries a ✕ and a free-text entry a delete button beside its name (both
+// aria-label "Remove <name>", shown on hover) that ask "Remove <name>?" in place;
+// a valued tag's name opens its editor on click. Writes land immediately.
 //
 // Selectors lean on the component's own class names (.etc, .tag-chip,
 // .etc-group) where there is no role to hang them on: a chip is not a button,
@@ -159,19 +160,24 @@ export function tagChip(scope: Locator, name: string, kind: 'direct' | 'inherite
     .first();
 }
 
-/** A tag group ("Markers", "Values", "Inherited") inside the tags section. */
-export function tagGroup(section: Locator, label: 'Markers' | 'Values' | 'Inherited'): Locator {
+/** A tag group inside the tags section: "Classifications" (markers and
+ *  enumerated tags, as chips), "Free text" (name line + full-width text) or
+ *  "Inherited". */
+export function tagGroup(
+  section: Locator,
+  label: 'Classifications' | 'Free text' | 'Inherited',
+): Locator {
   return section.locator('.etc-group').filter({
     has: section.page().locator('.etc-label', { hasText: new RegExp(`^\\s*${label}`) }),
   });
 }
 
-/** The full value text shown beside a valued chip in the "Values" group. */
+/** The full text of a free-text tag, shown under its name in "Free text". */
 export function tagValueText(section: Locator, name: string): Locator {
   return section
-    .locator('.etc-pair__name')
+    .locator('.etc-free')
     .filter({ has: section.page().locator('.tag-chip__name', { hasText: exact(name) }) })
-    .locator('xpath=following-sibling::div[1]');
+    .locator('.etc-free__value');
 }
 
 /** Wait until the tags section has answered: its Add control is up (the
@@ -333,7 +339,13 @@ export async function openRemoveTagConfirm(page: Page, scope: Locator, tagName: 
     .last();
   for (let i = 0; i < 5 && !(await confirm.isVisible().catch(() => false)); i++) {
     await chip.hover().catch(() => {});
-    await chip.locator(`[aria-label="Remove ${tagName}"]`).click({ timeout: 5000 }).catch(() => {});
+    // A marker's ✕ sits on its chip; a valued tag's delete is a button at the
+    // end of its "key: value" row. Both carry the same label.
+    await scope
+      .locator(`[aria-label="Remove ${tagName}"]`)
+      .first()
+      .click({ timeout: 5000 })
+      .catch(() => {});
     await confirm.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
   }
   await expect(confirm, `the remove confirm for ${tagName} never opened`).toBeVisible({ timeout: 5000 });
