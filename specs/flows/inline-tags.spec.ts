@@ -63,7 +63,7 @@ test.describe('inline tags @authn @authz @cedar', () => {
 
     await test.step('3 · a marker is a Label, a valued tag is a Value with its text beside it', async () => {
       const section = tagsSection(page);
-      const labels = tagGroup(section, 'Labels');
+      const labels = tagGroup(section, 'Markers');
       const values = tagGroup(section, 'Values');
       await expect(tagChip(labels, marker)).toBeVisible({ timeout: 15000 });
       await expect(labels.locator('.etc-count')).toHaveText('1');
@@ -107,7 +107,7 @@ test.describe('inline tags @authn @authz @cedar', () => {
     await test.step('7 · ✕ → Remove takes it off; an emptied group disappears', async () => {
       await removeEntityTag(page, marker);
       const section = tagsSection(page);
-      await expect(tagGroup(section, 'Labels')).toHaveCount(0);
+      await expect(tagGroup(section, 'Markers')).toHaveCount(0);
       await removeEntityTag(page, text);
       await expect(tagGroup(section, 'Values')).toHaveCount(0);
       await expect(section.getByText('No tags', { exact: true })).toBeVisible({ timeout: 10000 });
@@ -211,11 +211,11 @@ test.describe('inline tags @authn @authz @cedar', () => {
       await expect(tagChip(columnRow(page, 'a'), columnTag)).toBeVisible({ timeout: 20000 });
     });
 
-    await test.step('"Tag columns" switches into bulk mode and back', async () => {
-      await page.getByRole('button', { name: /^tag columns$/i }).click();
-      await expect(page.getByText(/^Select all \(\d+\)$/)).toBeVisible({ timeout: 10000 });
-      await expect(page.getByRole('button', { name: 'Tagged', exact: true })).toBeVisible();
-      await page.getByRole('button', { name: /^done$/i }).first().click();
+    await test.step('the "+" leads every taggable row and there is no bulk mode', async () => {
+      // The add control is on screen without hovering, before the chips.
+      const add = columnRow(page, 'a').getByRole('button', { name: /^Add tag to a$/ });
+      await expect(add).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('button', { name: /^tag columns$/i })).toHaveCount(0);
       await expect(page.getByText(/^Select all \(\d+\)$/)).toHaveCount(0);
     });
 

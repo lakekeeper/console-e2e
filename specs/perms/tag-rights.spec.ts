@@ -13,6 +13,7 @@ import {
   openTagAddMenu,
   openTagDefinition,
   pickerOffers,
+  pickerItem,
   tagChip,
   tagDefinitionIdFromUrl,
   tagsSection,
@@ -176,8 +177,11 @@ test.describe('tag rights — apply @authz', () => {
         await annaOpenNamespace(anna, wh, ns);
         await waitForTagsSection(anna, { requireAdd: true });
         const menu = await openTagAddMenu(anna);
-        // Either the list without it, or "None of the N tags … allowed to apply".
+        // Listed, but greyed with "You are not allowed to apply this tag".
         expect(await pickerOffers(anna, menu, tagName), `${tagName} must not be offered before apply`).toBeFalsy();
+        await expect(
+          (await pickerItem(anna, menu, tagName)).getByText('You are not allowed to apply this tag'),
+        ).toBeVisible({ timeout: 10000 });
         await closeTagMenu(anna, menu);
       });
 

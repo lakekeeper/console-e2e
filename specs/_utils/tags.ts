@@ -118,7 +118,7 @@ export function tagDefinitionIdFromUrl(page: Page): string {
 // The "Manage tags" dialog and its Settings-menu entry are gone. Every Details
 // tab now renders EntityTagsChips: a "TAGS <n>" heading with an "Add" text
 // button (TagAddMenu → TagPickerList in a v-menu), and the applied tags grouped
-// into Labels / Values / Inherited. A direct chip carries a ✕ (aria-label
+// into Markers / Values / Inherited. A direct chip carries a ✕ (aria-label
 // "Remove <name>", shown on hover) that asks "Remove <name>?" in place; a
 // valued chip opens its value editor on click. Writes land immediately.
 //
@@ -159,8 +159,8 @@ export function tagChip(scope: Locator, name: string, kind: 'direct' | 'inherite
     .first();
 }
 
-/** A tag group ("Labels", "Values", "Inherited") inside the tags section. */
-export function tagGroup(section: Locator, label: 'Labels' | 'Values' | 'Inherited'): Locator {
+/** A tag group ("Markers", "Values", "Inherited") inside the tags section. */
+export function tagGroup(section: Locator, label: 'Markers' | 'Values' | 'Inherited'): Locator {
   return section.locator('.etc-group').filter({
     has: section.page().locator('.etc-label', { hasText: new RegExp(`^\\s*${label}`) }),
   });
@@ -189,15 +189,15 @@ export async function waitForTagsSection(page: Page, opts: { requireAdd?: boolea
 }
 
 /** The open tag picker menu (TagAddMenu or a chip's value editor). Identified by
- *  what only it says: the picker's footer, or one of the add menu's states that
- *  replace the list (none allowed / refused / still checking). */
+ *  what only it says: the picker's footer, or the refusal that replaces the list
+ *  when definitions cannot be listed. */
 export function tagPickerMenu(page: Page): Locator {
   return page
     .locator('.v-overlay__content')
     .filter({ visible: true })
     .filter({
       hasText:
-        /Changes apply immediately\.|None of the \d+ tags that fit here|not allowed to list the tags|Checking which tags you may apply/,
+        /Changes apply immediately\.|not allowed to list the tags/,
     })
     .last();
 }
@@ -215,10 +215,13 @@ async function openMenuVia(page: Page, trigger: Locator, menu: Locator, what: st
   await expect(menu, `${what} never opened`).toBeVisible({ timeout: 5000 });
 }
 
-/** Wait out "Checking which tags you may apply…" — until every candidate's
- *  per-tag rights have answered, the list shows only what is known allowed. */
+/** Let the per-tag rights checks settle. The picker lists every definition at
+ *  once and asks for the rights of the rows on screen (and of a clicked row
+ *  before writing), so a row reads as offered until its answer greys it out
+ *  with "You are not allowed to apply this tag". */
 export async function waitForTagRights(menu: Locator) {
-  await expect(menu.getByText('Checking which tags you may apply…')).toBeHidden({ timeout: 20000 });
+  await menu.page().waitForTimeout(200); // the picker batches its asks for ~80ms
+  await menu.page().waitForLoadState('networkidle').catch(() => {});
 }
 
 /** Open the "Add" tag menu of the tags section on screen (Details tab). */
@@ -241,10 +244,12 @@ export async function pickerItem(page: Page, menu: Locator, tagName: string): Pr
     .first();
 }
 
-/** Whether the open picker offers this tag as applicable (listed AND not locked). */
+/** Whether the open picker offers this tag as applicable: listed, not locked as
+ *  already applied, and not greyed as refused once its rights have answered. */
 export async function pickerOffers(page: Page, menu: Locator, tagName: string): Promise<boolean> {
   const item = await pickerItem(page, menu, tagName);
   if (!(await item.isVisible({ timeout: 3000 }).catch(() => false))) return false;
+  await waitForTagRights(menu);
   return !(await item.evaluate((el) => el.classList.contains('v-list-item--disabled')).catch(() => true));
 }
 
