@@ -70,7 +70,7 @@ export async function loqeReadTable(
 
   let warehouseVisible = false;
   for (let i = 0; i < maxReloads; i++) {
-    warehouseVisible = await page.getByText(wh, { exact: true }).first().isVisible({ timeout: 12000 }).catch(() => false);
+    warehouseVisible = await page.getByText(wh, { exact: true }).first().waitFor({ state: 'visible', timeout: 12000 }).then(() => true).catch(() => false);
     if (warehouseVisible || i === maxReloads - 1) break;
     await page.reload();
     await page.waitForLoadState('networkidle').catch(() => {});

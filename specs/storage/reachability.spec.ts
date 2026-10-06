@@ -5,6 +5,7 @@ import {
   addNamespace,
   selectTab,
   openWarehouseSettings,
+  selectStorageProviderTab,
 } from '../_utils/warehouse';
 import { openLoqeAndAttach, createTableViaLoqe } from '../_utils/loqe';
 import { gotoReady } from '../_utils/app';
@@ -130,7 +131,7 @@ test.describe('storage reachability @authn', () => {
       // never resolves. Pick the one provider entry instead.
       // One click does not stick here either — Vuetify resets the tab while the
       // pane loads, which left SETTINGS selected and no Endpoint field on screen.
-      await selectTab(page, backend.tab, dialog);
+      await selectStorageProviderTab(page, dialog);
       const endpoint = dialog
         .getByLabel(/^Endpoint( \*)?$/i)
         .filter({ visible: true })

@@ -10,6 +10,7 @@ import {
   refreshWarehouses,
   seedWarehouseWithNamespace,
   selectTab,
+  selectStorageProviderTab,
 } from '../_utils/warehouse';
 import { grantOnCurrentPanel, revokeAllOnCurrentPanel } from '../_utils/permissions';
 
@@ -59,7 +60,7 @@ async function annaOpensWarehouse(browser: Browser, wh: string) {
   for (let i = 0; i < 5; i++) {
     await gotoReady(page, '/ui/warehouse');
     await refreshWarehouses(page);
-    if (await row.isVisible({ timeout: 5000 }).catch(() => false)) break;
+    if (await row.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) break;
     await page.reload().catch(() => {});
     await recoverFromOffline(page);
   }
@@ -147,7 +148,7 @@ test.describe('warehouse refusals @authz', () => {
         expectSettingsReadOnly(dialog));
 
       await test.step('4 · the storage pane is read-only and offers no update', async () => {
-        await selectTab(anna, backend!.tab, dialog);
+        await selectStorageProviderTab(anna, dialog);
         await expect(
           dialog.getByText(/You are not allowed to change the storage of this warehouse\./),
         ).toBeVisible({ timeout: 15000 });
@@ -155,7 +156,7 @@ test.describe('warehouse refusals @authz', () => {
         await expect(dialog.getByRole('button', { name: /update profile/i })).toHaveCount(0);
         await expect(dialog.getByRole('button', { name: /^verify$/i })).toHaveCount(0);
         const access = dialog.getByLabel(/Access Key ID/i).filter({ visible: true }).first();
-        if (await access.isVisible({ timeout: 3000 }).catch(() => false)) {
+        if (await access.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) {
           await expect(access).toHaveAttribute('readonly', /.*/);
         }
       });
@@ -263,7 +264,7 @@ test.describe('warehouse refusals @authz', () => {
     });
 
     await test.step('4 · the storage pane offers its updates', async () => {
-      await selectTab(page, backend!.tab, dialog);
+      await selectStorageProviderTab(page, dialog);
       await expect(dialog.getByRole('button', { name: /update credentials/i })).toBeVisible({
         timeout: 15000,
       });

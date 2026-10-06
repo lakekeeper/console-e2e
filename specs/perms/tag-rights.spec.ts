@@ -4,7 +4,7 @@ import { login, TEST_USER_2 } from '../_utils/auth';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
 import { seedWarehouseWithNamespace, openWarehouse, openNamespace, selectTab } from '../_utils/warehouse';
 import { grantOnCurrentPanel } from '../_utils/permissions';
-import { authToken, applyProject } from '../_utils/project';
+import { authToken, applyProject, pinProject } from '../_utils/project';
 import { namespaceIdOf, seedTagDefinitions } from '../_utils/seed';
 import { recoverFromOffline } from '../_utils/app';
 import {
@@ -237,7 +237,7 @@ test.describe('tag rights — unreadable tag @authz', () => {
     expect(tagId, 'could not read the tag id from the route').not.toBe('');
 
     const annaCtx = await browser.newContext({ baseURL: ANNA_BASE_URL });
-    await applyProject(annaCtx, project.id, project.name);
+    await pinProject(annaCtx, project.id, project.name);
     const anna = await annaCtx.newPage();
     try {
       await login(anna, TEST_USER_2);

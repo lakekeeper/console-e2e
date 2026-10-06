@@ -21,7 +21,7 @@ test.describe('role CRUD @authz', () => {
       await expect(page.locator('.v-application').first()).toBeVisible();
 
       // Idempotent: combos share backend state, so a prior run may have made it.
-      if (await page.getByText(roleName, { exact: true }).first().isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (await page.getByText(roleName, { exact: true }).first().waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) {
         return;
       }
 

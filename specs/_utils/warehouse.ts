@@ -38,7 +38,7 @@ async function gotoWarehouses(page: Page) {
 /** Click the nav tree's "Refresh warehouses" button (if present) and let it settle. */
 export async function refreshWarehouses(page: Page) {
   const btn = page.getByRole('button', { name: /refresh warehouse/i }).first();
-  if (await btn.isVisible({ timeout: 5000 }).catch(() => false)) {
+  if (await btn.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
     await btn.click().catch(() => {});
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(1000);
@@ -64,8 +64,8 @@ export async function createWarehouse(
   // Idempotent: a prior spec in this combo may have already created it (combos
   // share backend state, no per-test cleanup). Reuse it instead of colliding.
   const already =
-    (await page.getByRole('treeitem', { name: new RegExp(wh) }).first().isVisible({ timeout: 3000 }).catch(() => false)) ||
-    (await page.getByText(wh, { exact: true }).first().isVisible({ timeout: 1000 }).catch(() => false));
+    (await page.getByRole('treeitem', { name: new RegExp(wh) }).first().waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) ||
+    (await page.getByText(wh, { exact: true }).first().waitFor({ state: 'visible', timeout: 1000 }).then(() => true).catch(() => false));
   if (already) return wh;
 
   await page.getByRole('button', { name: /add warehouse/i }).first().click();
@@ -79,7 +79,7 @@ export async function createWarehouse(
   // when it is read (the nav tree does not refresh itself after a create), but the
   // dialog asks the server: a taken name disables Verify & Create and says so.
   // Without this a shared-state re-run stalls on a permanently disabled button.
-  if (await dialog.getByText(/Name already taken/i).first().isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await dialog.getByText(/Name already taken/i).first().waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) {
     await dialog.getByRole('button', { name: /^cancel$/i }).click().catch(() => {});
     await expect(dialog).toBeHidden({ timeout: 10000 }).catch(() => {});
     return wh;
@@ -141,7 +141,7 @@ export async function openNamespace(page: Page, ns: string) {
 /** Add a namespace on the currently-open warehouse detail page (idempotent). */
 export async function addNamespace(page: Page, ns: string) {
   // Reuse if a prior spec already created it in this combo.
-  if (await page.getByText(ns, { exact: true }).first().isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await page.getByText(ns, { exact: true }).first().waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) {
     return;
   }
   // On a NAMESPACE page sub-namespaces live behind the "Namespaces" tab
@@ -163,7 +163,7 @@ export async function addNamespace(page: Page, ns: string) {
   // nothing. Retry until the dialog's field is actually on screen.
   const field = page.getByLabel(/Namespace Name/i).filter({ visible: true }).first();
   for (let i = 0; i < 4; i++) {
-    if (await field.isVisible({ timeout: 2000 }).catch(() => false)) break;
+    if (await field.waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false)) break;
     await addNs.first().click({ timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(600);
   }
@@ -223,15 +223,39 @@ export async function openWarehouseSettings(page: Page): Promise<Locator> {
     // Icon-only button, so it has no accessible name.
     await page.locator('button:has(.mdi-cog)').first().click().catch(() => {});
     const option = page.getByRole('option', { name: /^warehouse settings$/i }).first();
-    if (await option.isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (await option.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
       await option.click().catch(() => {});
     } else {
       await page.getByText('Warehouse settings', { exact: true }).last().click().catch(() => {});
     }
-    if (await dialog.isVisible({ timeout: 10000 }).catch(() => false)) return dialog;
+    if (await dialog.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false)) return dialog;
   }
   await expect(dialog, 'Warehouse settings dialog never opened').toBeVisible({ timeout: 15000 });
   return dialog;
+}
+
+/**
+ * Open the storage-provider pane of the Warehouse settings dialog. The rail lists
+ * only THIS warehouse's provider and labels it by storage type ("AWS S3" for any
+ * s3 profile), not by the create-dialog entry ("S3 Compatible"), so a backend's
+ * `tab` regex does not match it. Pick the one entry that is neither Settings nor
+ * Connect compute, and click until it sticks (Vuetify resets it while loading).
+ */
+export async function selectStorageProviderTab(page: Page, dialog: Locator) {
+  const tab = dialog
+    .getByRole('tab')
+    .filter({ visible: true })
+    .filter({ hasNotText: /^\s*(settings|connect compute)\s*$/i })
+    .first();
+  await tab.waitFor({ state: 'visible', timeout: 20000 });
+  for (let i = 0; i < 6; i++) {
+    if ((await tab.getAttribute('aria-selected').catch(() => null)) === 'true') return;
+    await tab.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(600);
+  }
+  await expect(tab, 'the storage provider pane never opened').toHaveAttribute('aria-selected', 'true', {
+    timeout: 10000,
+  });
 }
 
 /**
@@ -249,7 +273,11 @@ export async function selectTab(page: Page, name: RegExp, scope?: Locator) {
   // useGrantsSupported). 5s was short enough that selectTab returned false, the
   // caller carried on with the WRONG tab selected, and the failure surfaced much
   // later as "no row for anna" — the grant had never been attempted.
-  if (!(await tab.isVisible({ timeout: 20000 }).catch(() => false))) return false;
+  // waitFor, not isVisible: isVisible ignores its timeout and answers at once,
+  // and the pages now render their tabs only after a loading spinner — so right
+  // after a navigation it returned false, nothing was clicked, and the caller
+  // carried on with the default tab.
+  if (!(await tab.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false))) return false;
   await page.waitForLoadState('networkidle').catch(() => {});
   for (let i = 0; i < 6; i++) {
     if ((await tab.getAttribute('aria-selected').catch(() => null)) === 'true') {
@@ -319,7 +347,7 @@ export async function bulkDeleteTables(page: Page, names: string[]) {
 export async function ensureTable(page: Page, tbl: string, field = 'a') {
   if (/\/namespace\//.test(page.url())) await selectTab(page, /^tables$/i);
   const existing = page.getByRole('row', { name: new RegExp(`\\b${tbl}\\b`) }).first();
-  if (await existing.isVisible({ timeout: 4000 }).catch(() => false)) return;
+  if (await existing.waitFor({ state: 'visible', timeout: 4000 }).then(() => true).catch(() => false)) return;
   await addTable(page, tbl, field);
 }
 

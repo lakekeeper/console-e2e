@@ -37,7 +37,7 @@ export async function login(page: Page, credentials: AuthCredentials = TEST_USER
   const alreadyAuthenticated = await page
     .locator('[data-testid="user-menu"], .v-app-bar')
     .first()
-    .isVisible({ timeout: 2000 })
+    .waitFor({ state: 'visible', timeout: 2000 }).then(() => true)
     .catch(() => false);
   if (alreadyAuthenticated) return;
 
@@ -50,7 +50,7 @@ export async function login(page: Page, credentials: AuthCredentials = TEST_USER
   // which boots heavier), so retry the click until the redirect happens.
   const onKeycloak = () => /\/realms\/iceberg\//.test(page.url());
   for (let attempt = 0; attempt < 3 && !onKeycloak(); attempt++) {
-    if (await loginButton.isVisible({ timeout: 8000 }).catch(() => false)) {
+    if (await loginButton.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false)) {
       await loginButton.click().catch(() => {});
     }
     await page.waitForURL(/\/realms\/iceberg\//, { timeout: 8000 }).catch(() => {});
@@ -59,7 +59,7 @@ export async function login(page: Page, credentials: AuthCredentials = TEST_USER
   const keycloakFormVisible = await page
     .locator('#kc-form-login, input[name="username"], input[id="username"]')
     .first()
-    .isVisible({ timeout: 10000 })
+    .waitFor({ state: 'visible', timeout: 10000 }).then(() => true)
     .catch(() => false);
 
   if (keycloakFormVisible) {
@@ -92,7 +92,7 @@ export async function login(page: Page, credentials: AuthCredentials = TEST_USER
 
 export async function logout(page: Page) {
   const userMenu = page.locator('[data-testid="user-menu"], .v-app-bar .v-avatar').first();
-  if (await userMenu.isVisible({ timeout: 5000 }).catch(() => false)) {
+  if (await userMenu.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
     await userMenu.click();
     const logoutButton = page
       .locator('[data-testid="logout-button"], .v-list-item:has-text("Logout"), button:has-text("Logout")')

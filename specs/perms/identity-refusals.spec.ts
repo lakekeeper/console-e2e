@@ -1,7 +1,7 @@
 import { Browser, BrowserContext, Locator, Page } from '@playwright/test';
 import { test, expect } from '../_fixtures/auth.fixture';
 import { login, TEST_USER_2 } from '../_utils/auth';
-import { applyProject, authToken } from '../_utils/project';
+import { authToken, pinProject } from '../_utils/project';
 import { gotoReady } from '../_utils/app';
 import { gotoTagDefinitions } from '../_utils/tags';
 
@@ -51,7 +51,7 @@ async function annaIn(
   project: { id: string; name: string },
 ): Promise<{ ctx: BrowserContext; page: Page }> {
   const ctx = await browser.newContext({ baseURL: ANNA_BASE_URL });
-  await applyProject(ctx, project.id, project.name);
+  await pinProject(ctx, project.id, project.name);
   const page = await ctx.newPage();
   await login(page, TEST_USER_2);
   return { ctx, page };
@@ -64,7 +64,7 @@ async function annaIn(
  */
 async function expectAfterReload(page: Page, locator: Locator, tries = 3) {
   for (let i = 0; i < tries; i++) {
-    if (await locator.isVisible({ timeout: 15000 }).catch(() => false)) return;
+    if (await locator.waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false)) return;
     await page.reload().catch(() => {});
     await page.waitForLoadState('domcontentloaded').catch(() => {});
   }

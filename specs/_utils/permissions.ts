@@ -86,7 +86,7 @@ export async function grantOnCurrentPanel(
     } catch {
       await page.keyboard.press('Escape').catch(() => {});
       await page.waitForTimeout(1000);
-      if (await principalRow.isVisible({ timeout: 2000 }).catch(() => false)) return; // already granted
+      if (await principalRow.waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false)) return; // already granted
     }
   }
   // Final assertion (surfaces a clear failure if all attempts fell through).
@@ -153,14 +153,14 @@ export async function grantTableRead(
  */
 export async function revokeAllOnCurrentPanel(page: Page, username: string) {
   const row = page.getByRole('row', { name: new RegExp(username, 'i') }).first();
-  if (!(await row.isVisible({ timeout: 5000 }).catch(() => false))) return;
+  if (!(await row.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false))) return;
 
   await row.getByRole('button', { name: /revoke all/i }).first().click({ timeout: 8000 }).catch(() => {});
   const confirm = page
     .locator('.v-overlay__content')
     .filter({ hasText: /Revoke all grants/i })
     .last();
-  if (await confirm.isVisible({ timeout: 5000 }).catch(() => false)) {
+  if (await confirm.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
     await confirm.getByRole('button', { name: /^revoke$/i }).click({ timeout: 8000 }).catch(() => {});
   }
   await expect(row).toBeHidden({ timeout: 15000 }).catch(() => {});

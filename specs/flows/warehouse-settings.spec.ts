@@ -6,6 +6,7 @@ import {
   warehouseName,
   selectTab,
   openWarehouseSettings,
+  selectStorageProviderTab,
 } from '../_utils/warehouse';
 
 // Saving storage from the fullscreen settings dialog used to report success in a
@@ -41,7 +42,7 @@ test.describe('warehouse settings @authn @authz @cedar', () => {
       // Same as the reachability spec: the settings rail labels the provider by
       // storage type, not by the create-dialog entry, so pick the single
       // provider entry rather than matching backend.tab.
-      await selectTab(page, backend!.tab, dialog);
+      await selectStorageProviderTab(page, dialog);
 
       // Only the CREDENTIALS. The profile fields (bucket, region, endpoint) are
       // rendered readonly here because the stored profile is what the warehouse

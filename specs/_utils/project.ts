@@ -129,3 +129,34 @@ export async function applyProject(
     [projectId, name] as const,
   );
 }
+
+/**
+ * applyProject, and keep the app from leaving that project.
+ *
+ * The app bar loads the project list on mount and, when the selected project is
+ * not in it, switches to the first project listed (loadProjectList). A user with
+ * no grant in a test's isolated project never sees it listed, so she is moved to
+ * the Default Project mid-test — and a refusal spec ends up asserting on an
+ * empty list in the wrong project. Granting her a project right to stay listed
+ * would also grant what those specs assert she lacks, so instead her context's
+ * project-list response carries the project. Use it only for a user whose
+ * refusals are the subject; everything else she does stays real.
+ */
+export async function pinProject(ctx: BrowserContext, projectId: string, name: string): Promise<void> {
+  await applyProject(ctx, projectId, name);
+  if (!projectId) return;
+  await ctx.route('**/management/v1/project-list', async (route) => {
+    const res = await route.fetch();
+    let body: any;
+    try {
+      body = await res.json();
+    } catch {
+      return route.fulfill({ response: res });
+    }
+    const projects = Array.isArray(body?.projects) ? body.projects : [];
+    if (!projects.some((p: any) => p['project-id'] === projectId)) {
+      body = { ...body, projects: [...projects, { 'project-id': projectId, 'project-name': name }] };
+    }
+    await route.fulfill({ response: res, json: body });
+  });
+}

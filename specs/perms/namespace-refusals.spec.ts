@@ -74,7 +74,7 @@ async function annaOpensWarehouse(browser: Browser, wh: string) {
   for (let i = 0; i < 5; i++) {
     await gotoReady(page, '/ui/warehouse');
     await refreshWarehouses(page);
-    if (await row.isVisible({ timeout: 5000 }).catch(() => false)) break;
+    if (await row.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) break;
     await page.reload().catch(() => {});
     await recoverFromOffline(page);
   }
@@ -102,7 +102,7 @@ async function openNamespaceSettings(target: Page) {
   const menu = target.locator('.v-overlay__content .v-list').filter({ visible: true }).last();
   for (let i = 0; i < 3; i++) {
     await trigger.click({ timeout: 10000 }).catch(() => {});
-    if (await menu.isVisible({ timeout: 5000 }).catch(() => false)) return menu;
+    if (await menu.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) return menu;
   }
   await expect(menu, 'the namespace Settings menu never opened').toBeVisible({ timeout: 5000 });
   return menu;

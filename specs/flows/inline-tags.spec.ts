@@ -71,7 +71,9 @@ test.describe('inline tags @authn @authz @cedar', () => {
       await expect(values.locator('.etc-count')).toHaveText('1');
       await expect(tagValueText(section, text)).toHaveText('alpha');
       // The heading counts every tag on the namespace.
-      await expect(section.locator('.etc-head .v-chip').first()).toHaveText('2');
+      // Detail pages pass their own #heading (nsx-/tdx-head), so match the count
+      // chip anywhere in the heading wrapper, not only the default .etc-head.
+      await expect(section.locator('.etc-head-wrap .v-chip').first()).toHaveText('2');
     });
 
     await test.step('4 · the picker lists applied tags locked, so a search finds them', async () => {

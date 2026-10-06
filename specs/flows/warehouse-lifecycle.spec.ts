@@ -30,7 +30,7 @@ test.describe('warehouse lifecycle @authn @authz @cedar', () => {
         // in a loop until the just-created warehouse shows up.
         const treeitem = page.getByRole('treeitem', { name: new RegExp(wh) });
         for (let i = 0; i < 4; i++) {
-          if (await treeitem.first().isVisible({ timeout: 5000 }).catch(() => false)) break;
+          if (await treeitem.first().waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) break;
           await refreshWarehouses(page);
         }
         await expect(treeitem.first()).toBeVisible({ timeout: 10000 });

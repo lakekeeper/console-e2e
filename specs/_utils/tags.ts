@@ -67,7 +67,7 @@ export async function createTagDefinition(
   const { name, valueKind = 'marker', scope = ['Warehouse', 'Namespace', 'Table', 'View'] } = opts;
   await gotoTagDefinitions(page);
 
-  if (await page.getByText(name, { exact: true }).first().isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await page.getByText(name, { exact: true }).first().waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) {
     return name;
   }
 
@@ -254,7 +254,7 @@ export async function pickerItem(page: Page, menu: Locator, tagName: string): Pr
  *  already applied, and not greyed as refused once its rights have answered. */
 export async function pickerOffers(page: Page, menu: Locator, tagName: string): Promise<boolean> {
   const item = await pickerItem(page, menu, tagName);
-  if (!(await item.isVisible({ timeout: 3000 }).catch(() => false))) return false;
+  if (!(await item.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false))) return false;
   await waitForTagRights(menu);
   return !(await item.evaluate((el) => el.classList.contains('v-list-item--disabled')).catch(() => true));
 }
@@ -267,7 +267,7 @@ export async function pickTag(page: Page, menu: Locator, tagName: string, value?
   await item.click();
   if (!value) return;
   const field = menu.getByPlaceholder('Value', { exact: true }).filter({ visible: true }).first();
-  if (await field.isVisible({ timeout: 5000 }).catch(() => false)) {
+  if (await field.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
     await field.fill(value);
     await menu.getByRole('button', { name: /^(assign|update)$/i }).first().click();
   } else {
@@ -295,7 +295,7 @@ export async function closeTagMenu(page: Page, menu: Locator) {
 export async function applyEntityTag(page: Page, opts: { tagName: string; value?: string }) {
   const section = await waitForTagsSection(page);
   const chip = tagChip(section, opts.tagName);
-  if (await chip.isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await chip.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) {
     if (opts.value) await setEntityTagValue(page, opts.tagName, opts.value);
     return;
   }
@@ -315,7 +315,7 @@ export async function setEntityTagValue(page: Page, tagName: string, value: stri
   const editor = tagPickerMenu(page);
   await openMenuVia(page, chip.locator('.tag-chip__name'), editor, `the value editor of ${tagName}`);
   const field = editor.getByPlaceholder('Value', { exact: true }).first();
-  if (await field.isVisible({ timeout: 5000 }).catch(() => false)) {
+  if (await field.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
     await field.fill(value);
     await editor.getByRole('button', { name: /^(update|assign)$/i }).first().click();
   } else {
@@ -355,7 +355,7 @@ export async function openRemoveTagConfirm(page: Page, scope: Locator, tagName: 
 /** Remove a direct chip inside `scope` (✕ → confirm → Remove). No-op when absent. */
 export async function removeTagChip(page: Page, scope: Locator, tagName: string) {
   const chip = tagChip(scope, tagName);
-  if (!(await chip.isVisible({ timeout: 3000 }).catch(() => false))) return;
+  if (!(await chip.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false))) return;
   const confirm = await openRemoveTagConfirm(page, scope, tagName);
   await confirm.getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(chip).toBeHidden({ timeout: 15000 });
@@ -385,7 +385,7 @@ export function columnRow(page: Page, path: string): Locator {
 export async function applyColumnTag(page: Page, path: string, tagName: string, value?: string) {
   const row = columnRow(page, path);
   await expect(row, `no taggable schema row for ${path}`).toBeVisible({ timeout: 20000 });
-  if (await tagChip(row, tagName).isVisible({ timeout: 2000 }).catch(() => false)) return;
+  if (await tagChip(row, tagName).waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false)) return;
   // The "+" only fades in on row hover (it is laid out and clickable either way).
   await row.hover().catch(() => {});
   const menu = tagPickerMenu(page);

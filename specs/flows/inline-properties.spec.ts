@@ -22,13 +22,9 @@ import {
 
 const uniqueKey = (prefix: string) => `${prefix}_${Date.now().toString(36)}`;
 
-/** The namespace Details "Properties" card. */
+/** The namespace Details "Properties" section (a hairline-headed section, no longer a card). */
 function namespacePropsCard(page: Page): Locator {
-  return page
-    .locator('.v-card')
-    .filter({ visible: true })
-    .filter({ has: page.locator('.v-card-title', { hasText: /^\s*Properties/ }) })
-    .first();
+  return page.locator('.nsx-section--props').filter({ visible: true }).first();
 }
 
 /** The table Details "Properties" section. */
@@ -65,7 +61,7 @@ async function openSettingsDialog(page: Page, entry: RegExp, subtitle: string): 
   for (let i = 0; i < 4 && !(await dialog.isVisible().catch(() => false)); i++) {
     await page.getByRole('button', { name: /^settings$/i }).first().click({ timeout: 5000 }).catch(() => {});
     const item = page.locator('.v-list-item').filter({ visible: true }).filter({ hasText: entry }).first();
-    if (await item.isVisible({ timeout: 4000 }).catch(() => false)) {
+    if (await item.waitFor({ state: 'visible', timeout: 4000 }).then(() => true).catch(() => false)) {
       // The menu entry's subtitle no longer mentions properties.
       await expect(item).toContainText(subtitle);
       await expect(item).not.toContainText(/propert/i);
@@ -108,7 +104,8 @@ test.describe('inline properties @noauth @authn @authz @cedar', () => {
       await save.click();
       // Saving leaves edit mode; the read-only table carries the new pair.
       await expect(card.getByRole('button', { name: /^edit$/i })).toBeVisible({ timeout: 15000 });
-      const row = card.getByRole('row').filter({ hasText: key });
+      // Read-only pairs are a <dl> of .nsx-kv__row, not table rows.
+      const row = card.locator('.nsx-kv__row').filter({ hasText: key });
       await expect(row).toBeVisible({ timeout: 15000 });
       await expect(row).toContainText('team-data');
     });
@@ -116,7 +113,7 @@ test.describe('inline properties @noauth @authn @authz @cedar', () => {
     await test.step('it was committed, not just redrawn', async () => {
       await page.reload();
       await selectTab(page, /^details$/i);
-      await expect(namespacePropsCard(page).getByRole('row').filter({ hasText: key })).toBeVisible({ timeout: 15000 });
+      await expect(namespacePropsCard(page).locator('.nsx-kv__row').filter({ hasText: key })).toBeVisible({ timeout: 15000 });
     });
 
     await test.step('Cancel with an unsaved edit asks before discarding', async () => {
