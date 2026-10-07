@@ -10,8 +10,10 @@ import { recoverFromOffline } from '../_utils/app';
 // combo.
 //
 // Break-glass: peter is an instance admin (`is-instance-admin` on /whoami), so
-// EVERY write here — save, dry-run and delete alike — needs a free-text reason,
-// sent as the `x-break-glass` header. Save stays disabled until it is filled.
+// stored policies are read-only for him until he starts break-glass with a
+// reason (Lakekeeper 0.14). The reason is given once per page, in the header,
+// and rides as the `x-break-glass` header on the listing and on every write —
+// save, dry-run and delete alike.
 test.describe('cedar policies @cedar', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -90,7 +92,17 @@ test.describe('cedar policies @cedar', () => {
 
     const editor = page.locator('.v-overlay__content').filter({ hasText: 'New policy' }).last();
 
-    await test.step('1 · open the fullscreen editor', async () => {
+    await test.step('1 · start break-glass with a reason', async () => {
+      // Read-only until then: no New policy for an instance admin without a reason.
+      await expect(page.getByRole('button', { name: 'Break-glass', exact: true })).toBeVisible({ timeout: 20000 });
+      await expect(page.getByRole('button', { name: 'New policy', exact: true })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Break-glass', exact: true }).click();
+      await page.getByLabel('Break-glass reason *').fill(BREAK_GLASS);
+      await page.getByRole('button', { name: 'Start break-glass' }).click();
+      await expect(page.getByText('Break-glass active')).toBeVisible({ timeout: 10000 });
+    });
+
+    await test.step('2 · open the fullscreen editor', async () => {
       await page.getByRole('button', { name: 'New policy', exact: true }).first().click();
       await expect(editor).toBeVisible({ timeout: 20000 });
       // Two ways of writing the same policy. Text is the source of truth; the
@@ -99,7 +111,7 @@ test.describe('cedar policies @cedar', () => {
       await expect(editor.getByRole('tab', { name: /Builder/ })).toBeVisible();
     });
 
-    await test.step('2 · write the policy', async () => {
+    await test.step('3 · write the policy', async () => {
       await editor.getByLabel('Name *').fill(policyName);
       await editor.getByLabel('Description').fill('created by e2e');
       const source = editor.locator('.cm-content').first();
@@ -107,15 +119,7 @@ test.describe('cedar policies @cedar', () => {
       await page.keyboard.press('ControlOrMeta+A');
       await page.keyboard.press('Delete');
       await source.fill(POLICY_SOURCE);
-    });
-
-    await test.step('3 · Save is gated on a break-glass reason', async () => {
-      const save = editor.getByRole('button', { name: 'Save', exact: true });
-      // peter is an instance admin, so the reason is demanded up front and Save
-      // stays disabled until it is given.
-      await expect(save).toBeDisabled();
-      await editor.getByLabel(/Break-glass reason/i).fill(BREAK_GLASS);
-      await expect(save).toBeEnabled({ timeout: 10000 });
+      await expect(editor.getByRole('button', { name: 'Save', exact: true })).toBeEnabled({ timeout: 10000 });
     });
 
     await test.step('4 · Test dry-runs the apply', async () => {
@@ -133,11 +137,9 @@ test.describe('cedar policies @cedar', () => {
       });
     });
 
-    await test.step('6 · delete it (break-glass again)', async () => {
-      const row = page.getByRole('row', { name: new RegExp(policyName) }).first();
-      await row.locator('button:has(.mdi-delete-outline), button:has(.mdi-delete)').first().click();
+    await test.step('6 · delete it (still under break-glass)', async () => {
+      await page.getByRole('button', { name: `Delete ${policyName}` }).click();
       const confirm = page.locator('.v-overlay__content').filter({ hasText: /delete/i }).last();
-      await confirm.getByLabel(/Break-glass reason/i).fill(BREAK_GLASS);
       // Cancel comes BEFORE the destructive action now (normalised across the
       // component library), so this selects by name rather than by position.
       await confirm.getByRole('button', { name: /^delete$/i }).click();

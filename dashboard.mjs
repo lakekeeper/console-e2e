@@ -139,6 +139,8 @@ const SPEC_ORDER = [
   'flows/cedar-policies',
   'perms/access-control',
   'perms/tag-rights',
+  'perms/policy-rights',
+  'perms/grant-rights',
   'perms/warehouse-refusals',
   'perms/namespace-refusals',
   'perms/identity-refusals',
