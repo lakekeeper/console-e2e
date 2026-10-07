@@ -26,8 +26,15 @@ const archived = !!argOf('--out');
 const runName = archived ? path.basename(path.dirname(outFile)) : '';
 const resultsDir = argOf('--results') ? path.resolve(argOf('--results')) : path.join(dir, 'results');
 const files = fs.existsSync(resultsDir)
-  ? fs.readdirSync(resultsDir).filter((f) => f.endsWith('.json') && f !== 'current.json' && !f.startsWith('unit'))
-  : []; // current.json (live marker) + unit*.json (component unit tests) are not combos
+  ? fs
+      .readdirSync(resultsDir)
+      .filter((f) => f.endsWith('.json') && f !== 'current.json' && !f.startsWith('unit') && !f.endsWith('.live.json'))
+  : []; // current.json (live marker), *.live.json (in-progress combos, below) + unit*.json are not final combos
+// A combo still running: reporters/current.mjs keeps its per-test status here
+// until Playwright writes the final results/<combo>.json.
+const liveFiles = fs.existsSync(resultsDir)
+  ? fs.readdirSync(resultsDir).filter((f) => f.endsWith('.live.json'))
+  : [];
 
 // Archived runs: run.mjs copies playwright-report/ → history/<stamp>__<scope>/ after
 // every run and never auto-prunes them. Offer them in a dropdown so past runs stay
@@ -114,6 +121,31 @@ for (const f of files) {
   for (const s of data.suites || []) walk(s, combo, null);
 }
 
+for (const f of liveFiles) {
+  const combo = f.replace(/\.live\.json$/, '');
+  if (combos[combo]) continue; // the final result is in
+  let live;
+  try {
+    live = JSON.parse(fs.readFileSync(path.join(resultsDir, f), 'utf8'));
+  } catch {
+    continue;
+  }
+  combos[combo] = {
+    startTime: live.startTime || null,
+    tests: new Map(),
+    project: combo,
+    live: true,
+    ...underTest(combo, live.metadata || {}),
+  };
+  for (const [key, status] of Object.entries(live.tests || {})) {
+    const i = key.indexOf(' › ');
+    const file = key.slice(0, i);
+    const title = key.slice(i + 3);
+    if (!allTests.has(key)) allTests.set(key, { file, title });
+    combos[combo].tests.set(key, status);
+  }
+}
+
 const comboNames = Object.keys(combos).sort();
 // Preserve definition order (Playwright reports specs in file order), NOT alpha.
 const testKeys = [...allTests.keys()];
@@ -174,6 +206,10 @@ const ICON = {
   failed: '<span class="f">❌</span>',
   flaky: '<span class="k">⚠️</span>',
   skipped: '<span class="s">➖</span>',
+  // live, while the combo runs
+  pending: '<span class="na" title="not run yet">○</span>',
+  running: '<span title="running">⏳</span>',
+  retrying: '<span title="failed, retrying">🔁</span>',
 };
 const cell = (st) => (st ? ICON[st] || st : '<span class="na">·</span>');
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -222,7 +258,7 @@ const header =
           : `index.html#?q=p:${encodeURIComponent(combos[c].project)}`;
       const label = MODE_LABEL[modeOf(c)] || '';
       const { edition, backend, ui } = combos[c];
-      return `<th class="${cls}"><div class="ed ed-${edition.toLowerCase()}" title="${esc(backend)}">LK ${edition}</div><a href="${link}" target="_blank" title="Open ${esc(c)} Playwright report">${esc(c)} ↗</a><div class="meta">${esc(ui)}<br><span title="${esc(backend)}">${esc(backend.replace(/^(binary|image) .*\//, '$1 …/'))}</span><br>${esc(label)}<br>${t.p}✅ ${t.f}❌${t.k ? ` ${t.k}⚠️` : ''}${t.s ? ` ${t.s}➖` : ''} · ${fmt(combos[c].startTime)}</div></th>`;
+      return `<th class="${cls}"><div class="ed ed-${edition.toLowerCase()}" title="${esc(backend)}">LK ${edition}</div><a href="${link}" target="_blank" title="Open ${esc(c)} Playwright report">${esc(c)} ↗</a><div class="meta">${esc(ui)}<br><span title="${esc(backend)}">${esc(backend.replace(/^(binary|image) .*\//, '$1 …/'))}</span><br>${esc(label)}<br>${t.p}✅ ${t.f}❌${t.k ? ` ${t.k}⚠️` : ''}${t.s ? ` ${t.s}➖` : ''} · ${fmt(combos[c].startTime)}${combos[c].live ? `<br><b>⏳ running · ${t.p + t.f + t.k + t.s}/${combos[c].tests.size} done</b>` : ''}</div></th>`;
     })
     .join('') +
   `</tr>`;
@@ -251,7 +287,7 @@ const running = !archived && !!process.env.RUN_IN_PROGRESS;
 const runCurrent = process.env.RUN_CURRENT || '';
 const refreshSecs = running ? 8 : 60;
 const runBanner = running
-  ? `<div class="banner run">⏳ Test run IN PROGRESS${runCurrent ? ` — now running <b>${esc(runCurrent)}</b>` : ''}<div id="curtest" class="curtest"></div><div class="runsub">columns fill in as combos finish (auto-refreshing every ${refreshSecs}s). Results below are not final.</div></div>`
+  ? `<div class="banner run">⏳ Test run IN PROGRESS${runCurrent ? ` — now running <b>${esc(runCurrent)}</b>` : ''}<div id="curtest" class="curtest"></div><div class="runsub">results fill in as each test finishes (○ not run yet · ⏳ running · 🔁 retrying; auto-refreshing every ${refreshSecs}s). Results below are not final.</div></div>`
   : '';
 // Client-side poll of results/current.json (written by reporters/current.mjs) so the
 // banner shows the live test name BETWEEN the per-combo HTML rebuilds.
@@ -270,7 +306,7 @@ const livePoll = running
   : '';
 
 const html = `<!doctype html><meta charset="utf-8"><title>${archived ? `Run ${esc(runName)}` : 'Test Matrix Dashboard'}</title>
-${archived ? '' : `<meta http-equiv="refresh" content="${refreshSecs}">`}
+
 <style>
  body{font:13px/1.45 system-ui,sans-serif;margin:1.5rem;color:#1a1a2e}
  h1{margin:0 0 .25rem} .sub{color:#667;margin:0 0 1rem}
@@ -303,8 +339,25 @@ ${archived ? '' : `<meta http-equiv="refresh" content="${refreshSecs}">`}
  .runpick{padding:.5rem 1rem;border:1px solid #e3e3ef;border-radius:8px;margin-bottom:1rem;font-size:12px;background:#fafaff}
  .runpick select{font:inherit;padding:3px 6px;border:1px solid #cdd;border-radius:6px;max-width:60%}
  .rp-note{color:#778;margin-left:.5rem}
+ .exportbar{float:right;display:flex;gap:6px;margin-top:.2rem}
+ .exportbar button{font:inherit;padding:4px 10px;border:1px solid #cdd;border-radius:6px;background:#fff;cursor:pointer}
+ .exportbar button:hover{background:#f0f0f7}
+ /* Export: the whole table, not the scroll window of it, and no controls. */
+ body.exporting .tablewrap{max-height:none;overflow:visible;max-width:none}
+ body.exporting .exportbar,body.exporting .runpick{display:none}
+ @media print{
+  @page{size:A4 landscape;margin:8mm}
+  body{margin:0;font-size:10px}
+  .exportbar,.runpick{display:none}
+  .tablewrap{max-height:none;overflow:visible;max-width:none;border:0}
+  th,.rowh,.filerow td{position:static}
+  .banner{animation:none;box-shadow:none}
+  tr{break-inside:avoid}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ }
  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(240,165,0,.55)}50%{box-shadow:0 0 0 10px rgba(240,165,0,0)}}
 </style>
+<div class="exportbar"><button type="button" onclick="lkExportPdf()" title="Print dialog → Save as PDF">⬇ PDF</button><button type="button" onclick="lkExportJpg()" title="Download the page as a JPG">⬇ JPG</button></div>
 <h1>${archived ? `Archived run <code>${esc(runName)}</code>` : 'Test Matrix Dashboard'}</h1>
 ${
   archived
@@ -350,7 +403,43 @@ ${
     : ''
 }
 ${comboNames.length ? `<div class="tablewrap"><table>${header}${rows}</table></div>` : '<p>No results yet — run <code>just test-matrix</code>.</p>'}
-${livePoll}`;
+${livePoll}
+<script>
+var lkPaused = false;
+function lkStamp() { return new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-'); }
+function lkExportPdf() {
+  lkPaused = true;
+  window.print();
+}
+window.addEventListener('afterprint', function () { lkPaused = false; });
+function lkExportJpg() {
+  lkPaused = true;
+  document.body.classList.add('exporting');
+  function done() { document.body.classList.remove('exporting'); lkPaused = false; }
+  function go() {
+    window.html2canvas(document.body, { backgroundColor: '#ffffff', scale: 2, windowWidth: document.body.scrollWidth })
+      .then(function (canvas) {
+        var a = document.createElement('a');
+        a.download = 'e2e-dashboard-' + lkStamp() + '.jpg';
+        a.href = canvas.toDataURL('image/jpeg', 0.92);
+        a.click();
+      })
+      .catch(function (e) { alert('JPG export failed: ' + e); })
+      .then(done);
+  }
+  if (window.html2canvas) return go();
+  var s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+  s.onload = go;
+  s.onerror = function () { alert('Could not load the image exporter (offline?). Use PDF instead.'); done(); };
+  document.head.appendChild(s);
+}
+${archived ? '' : `// Auto-refresh, held while an export is open so it is not reloaded away.
+setTimeout(function reload() {
+  if (lkPaused) return setTimeout(reload, 2000);
+  location.reload();
+}, ${refreshSecs} * 1000);`}
+</script>`;
 
 fs.writeFileSync(outFile, html);
 console.log(`Matrix dashboard → ${path.relative(dir, outFile)} (${comboNames.length} combos, ${testKeys.length} tests, ${totalF} failing)`);

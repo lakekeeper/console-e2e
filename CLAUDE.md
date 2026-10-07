@@ -25,7 +25,10 @@ browser**. Read [README.md](README.md) first for the user-facing overview.
   journeys by area.
 - **`dashboard.mjs` / `catalog.mjs`** — build `DASHBOARD.html` / `TEST-CATALOG`.
   `reporters/current.mjs` writes `results/current.json` (live test name for the
-  dashboard banner). Each run's archive `history/<stamp>/` gets that run's
+  dashboard banner) and `results/<combo>.live.json` (every test's status so far),
+  and rebuilds the dashboard after each test, so a running combo's column fills
+  in row by row; both files go when the combo ends and its `<combo>.json` lands.
+  A run starts clean (all old results cleared) unless `KEEP_RESULTS=1`. Each run's archive `history/<stamp>/` gets that run's
   `results/` snapshot + a frozen `dashboard.html` (`dashboard.mjs --results --out`);
   `history-backfill.mjs` rebuilds them for older archives from the report's embedded zip.
 - **Blob merge needs `PWTEST_BLOB_DO_NOT_REMOVE=1`** (set in `runPlaywright`) — the

@@ -391,7 +391,7 @@ fs.rmSync(path.join(dir, 'test-results'), { recursive: true, force: true });
 const willRun = new Set();
 for (const app of apps)
   for (const mode of modes) if (servedUI || APP_MODES[app]?.includes(mode)) willRun.add(`${comboApp(app)}-${mode}`);
-const comboOfResult = (f) => f.replace(/\.json$/, '').replace(/-dark$/, '').replace(/-(firefox|webkit)$/, '');
+const comboOfResult = (f) => f.replace(/(\.live)?\.json$/, '').replace(/-dark$/, '').replace(/-(firefox|webkit)$/, '');
 if (!upOnly) {
   const keepOthers = env.KEEP_RESULTS === '1' || process.argv.includes('--keep-results');
   const resultsDir = path.join(dir, 'results');
