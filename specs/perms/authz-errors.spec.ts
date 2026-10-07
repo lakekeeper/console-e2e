@@ -68,7 +68,10 @@ test.describe('authorizer errors (Lakekeeper 0.14) @cedar', () => {
     );
     await gotoGrantsExplorer(page);
     await pickPrincipal(page, 'Peter Cold');
-    await expect(page.getByText(/server-side error, not a missing permission/)).toBeVisible({ timeout: 20000 });
+    // Said in the pane, where the listing would be (a snackbar may repeat it).
+    await expect(page.locator('.v-alert').getByText(/server-side error, not a missing permission/)).toBeVisible({
+      timeout: 20000,
+    });
     await expect(page.getByText(/not allowed to list/i)).toHaveCount(0);
     // The server's own wording names no cause worth showing.
     await expect(page.getByText('Authorization failed due to an internal error')).toHaveCount(0);
@@ -81,7 +84,9 @@ test.describe('authorizer errors (Lakekeeper 0.14) @cedar', () => {
       await fakePrincipalListing(page, API_ERROR(503, 'AuthorizationBackendError', 'authorizer unreachable'));
       await gotoGrantsExplorer(page);
       await pickPrincipal(page, 'Peter Cold');
-      await expect(page.getByText('Authorization service unavailable')).toBeVisible({ timeout: 20000 });
+      await expect(page.locator('.v-alert').getByText('Authorization service unavailable')).toBeVisible({
+        timeout: 20000,
+      });
       await expect(page.getByRole('button', { name: 'Retry' }).first()).toBeVisible();
       await page.unrouteAll({ behavior: 'ignoreErrors' });
     });
@@ -93,7 +98,9 @@ test.describe('authorizer errors (Lakekeeper 0.14) @cedar', () => {
       );
       await gotoGrantsExplorer(page);
       await pickPrincipal(page, 'Peter Cold');
-      await expect(page.getByText('The catalog is in read-only maintenance mode')).toBeVisible({ timeout: 20000 });
+      await expect(page.locator('.v-alert').getByText('The catalog is in read-only maintenance mode')).toBeVisible({
+        timeout: 20000,
+      });
       await expect(page.getByText('Authorization service unavailable')).toHaveCount(0);
     });
   });
