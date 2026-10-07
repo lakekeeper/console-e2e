@@ -189,9 +189,21 @@ test.describe('grant rights (Lakekeeper 0.14) @cedar', () => {
       const row = anna.page.locator('.v-treeview-item, .v-list-item', { hasText: new RegExp(`^\\s*${wh}\\s*$`) }).first();
       await row.hover();
       await row.locator('[class*="mdi-plus"]').first().click();
-      await expect(
-        anna.page.getByText("Checking another user's or role's access needs manage_grants on this warehouse.").first(),
-      ).toBeVisible({ timeout: 20000 });
+      const refusal = anna.page.getByText(
+        "Checking another user's or role's access needs manage_grants on this warehouse.",
+      );
+      await expect(refusal.first()).toBeVisible({ timeout: 20000 });
+
+      // The Check button asks batch-check, which refuses before anything about
+      // peter is looked up.
+      await anna.page.locator('.v-input', { hasText: 'Action' }).last().click();
+      await anna.page.locator('.v-overlay--active .v-list-item').first().click();
+      const check = anna.page.waitForResponse((r) => r.url().includes('/action/batch-check'));
+      await anna.page.getByRole('button', { name: 'Check', exact: true }).click();
+      const res = await check;
+      expect(res.status()).toBe(403);
+      expect((await res.json())?.error?.type).toBe('CannotInspectPermissions');
+      await expect(refusal.last()).toBeVisible();
     } finally {
       await anna.ctx.close();
     }

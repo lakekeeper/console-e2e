@@ -54,6 +54,8 @@ test.describe('policy rights (Lakekeeper 0.14) @cedar', () => {
     try {
       const annaId = await userIdOf(page, 'anna');
       await setUserGrants(page, project.id, { type: 'project' }, annaId, ['describe', 'read_policies']);
+      // Curated, so there is something to reset.
+      await setProjectPredefined(page, project.id, [{ id: MANAGE_TAGS, enabled: true }]);
 
       await test.step('predefined: listed, every switch disabled, with the read-only hint', async () => {
         await openPredefined(anna.page);
@@ -62,6 +64,22 @@ test.describe('policy rights (Lakekeeper 0.14) @cedar', () => {
         await expect(switches.first()).toBeVisible();
         const n = await switches.count();
         for (let i = 0; i < n; i++) await expect(switches.nth(i)).toBeDisabled();
+      });
+
+      // Reset carries no flag: it is offered, and the server's refusal is shown.
+      await test.step('reset: offered, refused in place', async () => {
+        await anna.page.locator('button:has(.mdi-dots-vertical)').first().click();
+        await anna.page.locator('.v-overlay--active .v-list-item', { hasText: 'Reset to inherited' }).click();
+        const confirm = anna.page.locator('.v-overlay__content').filter({ hasText: /Drop this scope/ }).last();
+        const reset = anna.page.waitForResponse(
+          (r) => r.url().endsWith('/project/predefined-policies') && r.request().method() === 'DELETE',
+        );
+        await confirm.getByRole('button', { name: 'Reset', exact: true }).click();
+        expect((await reset).status()).toBe(403);
+        await expect(confirm.locator('.v-alert')).toContainText(/reset_predefined_policies|not allowed/i, {
+          timeout: 10000,
+        });
+        await confirm.getByRole('button', { name: 'Cancel', exact: true }).click();
       });
 
       await test.step('stored: listed without a New policy button', async () => {
