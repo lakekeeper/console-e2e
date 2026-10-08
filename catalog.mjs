@@ -88,6 +88,7 @@ const SPEC_ORDER = [
   'perms/policy-rights',
   'perms/grant-rights',
   'perms/authz-errors',
+  'perms/break-glass-recovery',
   'perms/warehouse-refusals',
   'perms/namespace-refusals',
   'perms/identity-refusals',
