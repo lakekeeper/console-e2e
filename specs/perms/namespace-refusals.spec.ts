@@ -87,6 +87,26 @@ async function annaOpensWarehouse(browser: Browser, wh: string) {
   return { ctx, page };
 }
 
+/**
+ * Sign anna in once, then drop the context.
+ *
+ * Lakekeeper only knows a user after their first sign-in, and peter cannot
+ * grant to a principal the server has never seen — the Grants panel lists no
+ * row to pick. In a full run some earlier spec has always signed her in first,
+ * so this only bites when the file is run on its own (`--grep`). Doing it here
+ * makes the spec answer for itself either way.
+ */
+async function ensureAnnaKnown(browser: Browser) {
+  const ctx = await browser.newContext({ baseURL: ANNA_BASE_URL });
+  try {
+    const page = await ctx.newPage();
+    await login(page, TEST_USER_2);
+    await gotoReady(page, '/ui/warehouse');
+  } finally {
+    await ctx.close();
+  }
+}
+
 function warehouseIdFromUrl(target: Page): string {
   return target.url().match(/\/warehouse\/([^/?#]+)/)?.[1] ?? '';
 }
@@ -129,6 +149,9 @@ test.describe('namespace refusals @authz', () => {
   const hiddenNs = 'nsref_hidden';
   const tbl = 'nsref_tbl';
   let seeded: string | null = null;
+  test.beforeAll(async ({ browser }) => {
+    await ensureAnnaKnown(browser);
+  });
   test.afterEach(async ({ bootstrappedPage: page }) => {
     if (seeded) await revokeAnna(page, seeded, ns);
     seeded = null;
