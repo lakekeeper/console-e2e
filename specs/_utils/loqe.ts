@@ -100,3 +100,42 @@ export async function createTableViaLoqe(page: Page, wh: string, ns: string, tbl
   if (read.errored) throw new Error(`LoQE read-back failed:\n${read.errorText}`);
   await expect(page.locator('.loqe-result-table').first()).toContainText('1', { timeout: 15000 });
 }
+
+/** Put a doc on one column of a table, through the Iceberg REST catalog (LoQE's
+ *  DuckDB cannot write field docs). Adds a schema that differs only in that doc
+ *  and makes it current. `table` is the raw name — any quotes in it are part of
+ *  the name, not SQL quoting. */
+export async function setColumnDoc(
+  page: Page,
+  headers: Record<string, string>,
+  warehouseId: string,
+  ns: string,
+  table: string,
+  column: string,
+  doc: string,
+) {
+  const api = process.env.LK_API_URL || 'http://localhost:8181';
+  const url = `${api}/catalog/v1/${warehouseId}/namespaces/${encodeURIComponent(ns)}/tables/${encodeURIComponent(table)}`;
+  const loaded = await page.request.get(url, { headers });
+  if (!loaded.ok()) throw new Error(`loadTable ${table}: ${loaded.status()} ${await loaded.text()}`);
+  const meta = (await loaded.json()).metadata;
+  const currentId = meta['current-schema-id'];
+  const current = meta.schemas.find((s: any) => s['schema-id'] === currentId);
+  const fields = current.fields.map((f: any) => (f.name === column ? { ...f, doc } : f));
+  if (!fields.some((f: any) => f.name === column)) throw new Error(`no column ${column} on ${table}`);
+
+  const committed = await page.request.post(url, {
+    headers: { ...headers, 'content-type': 'application/json' },
+    data: {
+      requirements: [{ type: 'assert-current-schema-id', 'current-schema-id': currentId }],
+      updates: [
+        {
+          action: 'add-schema',
+          schema: { ...current, 'schema-id': Math.max(...meta.schemas.map((s: any) => s['schema-id'])) + 1, fields },
+        },
+        { action: 'set-current-schema', 'schema-id': -1 },
+      ],
+    },
+  });
+  if (!committed.ok()) throw new Error(`commit doc on ${table}: ${committed.status()} ${await committed.text()}`);
+}

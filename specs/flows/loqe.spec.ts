@@ -1,7 +1,9 @@
 import { test, expect } from '../_fixtures/auth.fixture';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
 import { seedWarehouseWithNamespace } from '../_utils/warehouse';
-import { openLoqeAndAttach, createTableViaLoqe } from '../_utils/loqe';
+import { openLoqeAndAttach, createTableViaLoqe, loqeExec, setColumnDoc } from '../_utils/loqe';
+import { apiHeaders, warehouseIdOf } from '../_utils/grants';
+import { currentProject } from '../_utils/project';
 
 // LoQE = in-browser DuckDB-WASM SQL engine. Needs SharedArrayBuffer (cross-origin
 // isolation). Probe: does the engine initialize headless? ("Ready" chip).
@@ -41,5 +43,34 @@ test.describe('loqe @authn @authz @cedar', () => {
 
     await openLoqeAndAttach(page, wh, ns);
     await createTableViaLoqe(page, wh, ns, 'demo_tbl');
+  });
+
+  // A quote inside a name is written twice in SQL: table `q"tbl` is `"q""tbl"`.
+  // LoQE must build and parse it that way end to end — CREATE, SELECT, and the
+  // "Field docs" lookup, which reads table names back out of the statement and
+  // used to stop at the first quote (no docs, or another table's).
+  test('table name with a quote: query and field docs', async ({ bootstrappedPage: page }) => {
+    test.skip(!deep, 'no browser-reachable storage backend with write CORS configured');
+    test.setTimeout(180000);
+
+    const { wh, ns } = await seedWarehouseWithNamespace(page, deep!);
+    const table = 'q"tbl';
+    const quoted = `"${wh}"."${ns}"."q""tbl"`;
+    const doc = 'Doc of the quoted table';
+
+    await openLoqeAndAttach(page, wh, ns);
+    await loqeExec(page, `drop table if exists ${quoted};`);
+    const created = await loqeExec(page, `create table ${quoted} as select 1 as a;`);
+    expect(created.errored, created.errorText).toBe(false);
+
+    const project = currentProject().id;
+    await setColumnDoc(page, await apiHeaders(page, project), await warehouseIdOf(page, project, wh), ns, table, 'a', doc);
+
+    const read = await loqeExec(page, `select a from ${quoted};`);
+    expect(read.errored, read.errorText).toBe(false);
+    await expect(page.locator('.loqe-result-table').first()).toContainText('1', { timeout: 15000 });
+
+    await page.getByRole('button', { name: /field docs/i }).click();
+    await expect(page.locator('.loqe-result-table .column-doc').first()).toHaveText(doc, { timeout: 30000 });
   });
 });
