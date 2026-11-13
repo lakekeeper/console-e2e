@@ -160,6 +160,7 @@ const SPEC_ORDER = [
   'smoke/server-settings',
   'flows/warehouse-lifecycle',
   'flows/nav-tree-refresh',
+  'flows/namespace-contents',
   'flows/warehouse-settings',
   'flows/loqe',
   'flows/warehouse',

@@ -148,7 +148,8 @@ export async function addNamespace(page: Page, ns: string) {
   // (NamespaceNamespaces is v-if'd on it); on a WAREHOUSE page they are the
   // default view. Without this the activator is never rendered, the click lands
   // on nothing, and every nested namespace ends up a sibling of the first.
-  if (/\/namespace\//.test(page.url())) await selectTab(page, /^namespaces$/i);
+  const onNamespace = /\/namespace\//.test(page.url());
+  if (onNamespace) await selectContentType(page, 'Namespaces');
 
   // A namespace page renders NamespaceAddDialog TWICE (toolbar + the table's
   // no-data slot) and the dialog's own submit is also called "Add Namespace",
@@ -156,13 +157,15 @@ export async function addNamespace(page: Page, ns: string) {
   // nothing and the field never appears. Take the visible activator, then scope
   // the field and submit to the dialog that opened.
   const addNs = page.getByRole('button', { name: /^add namespace$/i }).filter({ visible: true });
-  await expect(addNs.first()).toBeVisible({ timeout: 15000 });
+  // Both pages create through their "New" menu now; older builds had the button.
+  const viaNew = await openNewEntry(page, /^\s*Namespace\s*$/);
+  if (!viaNew) await expect(addNs.first()).toBeVisible({ timeout: 15000 });
 
   // Selecting the tab reloads the list, which re-renders the toolbar — a click
   // dispatched at the old node hits a detached element and silently opens
   // nothing. Retry until the dialog's field is actually on screen.
   const field = page.getByLabel(/Namespace Name/i).filter({ visible: true }).first();
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 4 && !viaNew; i++) {
     if (await field.waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false)) break;
     await addNs.first().click({ timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(600);
@@ -266,6 +269,58 @@ export async function selectStorageProviderTab(page: Page, dialog: Locator) {
  * journey kept looking for an "Add Table" button on the Namespaces pane. Click
  * until aria-selected sticks (the repo's own documented gotcha).
  */
+/**
+ * Show one type of a namespace's contents. The namespace page lists everything
+ * under one "Contents" tab with a chip per type; older builds had a tab per type
+ * instead, and the docker matrix still runs those images, so either is handled.
+ */
+/**
+ * Open a create entry from the namespace page's "New" menu (Namespace, Table,
+ * Register table, Dataset). Returns false when there is no New menu — older
+ * builds and the warehouse page have their own buttons instead.
+ */
+export async function openNewEntry(page: Page, entry: RegExp): Promise<boolean> {
+  const menu = page.getByRole('button', { name: /^new$/i }).filter({ visible: true }).first();
+  if (!(await menu.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false))) return false;
+  const item = page.locator('.v-overlay--active .v-list-item').filter({ hasText: entry }).first();
+  for (let i = 0; i < 4; i++) {
+    if (!(await item.isVisible().catch(() => false))) await menu.click({ timeout: 5000 }).catch(() => {});
+    if (await item.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)) break;
+  }
+  await item.click();
+  return true;
+}
+
+export async function selectContentType(
+  page: Page,
+  type: 'Namespaces' | 'Tables' | 'Generic tables' | 'Views' | 'Datasets',
+) {
+  const contents = page.getByRole('tab', { name: /^contents$/i }).filter({ visible: true }).first();
+  const hasContents = await contents
+    .waitFor({ state: 'visible', timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!hasContents) return selectTab(page, new RegExp(`^${type}$`, 'i'));
+
+  await selectTab(page, /^contents$/i);
+  // Chips add up, so start from "All" (which clears them) and pick just this one.
+  const all = page.locator('.nsc-types .v-chip').filter({ hasText: /^\s*All\s*$/ }).first();
+  if (!(await all.evaluate((el) => el.classList.contains('v-chip--selected')).catch(() => false))) {
+    await all.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(300);
+  }
+  const chip = page.locator('.nsc-types .v-chip').filter({ hasText: new RegExp(`^\\s*${type}\\s*$`) }).first();
+  await chip.waitFor({ state: 'visible', timeout: 10000 });
+  for (let i = 0; i < 4; i++) {
+    if (await chip.evaluate((el) => el.classList.contains('v-chip--selected')).catch(() => false)) break;
+    await chip.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(400);
+  }
+  await expect(chip).toHaveClass(/v-chip--selected/, { timeout: 5000 });
+  await page.waitForLoadState('networkidle').catch(() => {});
+  return true;
+}
+
 export async function selectTab(page: Page, name: RegExp, scope?: Locator) {
   const root = scope ?? page;
   const tab = root.getByRole('tab', { name }).filter({ visible: true }).first();
@@ -298,16 +353,18 @@ export async function selectTab(page: Page, name: RegExp, scope?: Locator) {
 export async function addTable(page: Page, tbl: string, field = 'a') {
   // Same tab gating as sub-namespaces: on a namespace page the table list (and
   // its "Add Table" button) only render when the Tables tab is selected.
-  if (/\/namespace\//.test(page.url())) await selectTab(page, /^tables$/i);
+  if (/\/namespace\//.test(page.url())) await selectContentType(page, 'Tables');
 
   // Two buttons say "Add Table" here: TableRegister (mdi-table-arrow-down) and
   // TableCreate (mdi-table-plus). The window item uses v-show, so both sit in
   // the DOM even while the tab is hidden — an unfiltered .first() picked a
   // hidden node, and once visible it picked REGISTER rather than create. Target
   // the create icon explicitly.
-  const add = page.locator('button:has(.mdi-table-plus)').filter({ visible: true }).first();
-  await expect(add).toBeVisible({ timeout: 15000 });
-  await add.click();
+  if (!(await openNewEntry(page, /^\s*Table\s*$/))) {
+    const add = page.locator('button:has(.mdi-table-plus)').filter({ visible: true }).first();
+    await expect(add).toBeVisible({ timeout: 15000 });
+    await add.click();
+  }
 
   const dialog = page.locator('.v-dialog').filter({ hasText: 'Create Table' }).last();
   await dialog.getByLabel(/Table Name/i).fill(tbl);
@@ -334,7 +391,7 @@ export async function bulkDeleteTables(page: Page, names: string[]) {
   }
   await page.getByRole('button', { name: new RegExp(`^delete \\(${names.length}\\)$`, 'i') }).click();
 
-  const dialog = page.locator('.v-dialog').filter({ hasText: /Delete \d+ tables?\?/ }).last();
+  const dialog = page.locator('.v-dialog').filter({ hasText: /Delete \d+ (tables?|items?)\?/ }).last();
   await dialog.getByRole('button', { name: /^delete$/i }).click();
   // The dialog stays open to report per-table outcomes; Cancel becomes Close.
   await expect(dialog.getByRole('button', { name: /^close$/i })).toBeVisible({ timeout: 30000 });
@@ -345,7 +402,7 @@ export async function bulkDeleteTables(page: Page, names: string[]) {
  *  the Create Table dialog when missing. addTable is not idempotent on its own,
  *  and a retry reuses its per-test project — so look first. */
 export async function ensureTable(page: Page, tbl: string, field = 'a') {
-  if (/\/namespace\//.test(page.url())) await selectTab(page, /^tables$/i);
+  if (/\/namespace\//.test(page.url())) await selectContentType(page, 'Tables');
   const existing = page.getByRole('row', { name: new RegExp(`\\b${tbl}\\b`) }).first();
   if (await existing.waitFor({ state: 'visible', timeout: 4000 }).then(() => true).catch(() => false)) return;
   await addTable(page, tbl, field);
@@ -355,7 +412,7 @@ export async function ensureTable(page: Page, tbl: string, field = 'a') {
  *  nav tree (which does not navigate), so take the last match and click until
  *  the route changes — the same pattern as openNamespace. */
 export async function openTable(page: Page, tbl: string) {
-  if (/\/namespace\//.test(page.url()) && !/\/table\//.test(page.url())) await selectTab(page, /^tables$/i);
+  if (/\/namespace\//.test(page.url()) && !/\/table\//.test(page.url())) await selectContentType(page, 'Tables');
   const target = new RegExp(`/table/[^/?#]+`);
   const cell = page.getByText(tbl, { exact: true }).filter({ visible: true }).last();
   for (let i = 0; i < 5 && !target.test(page.url()); i++) {
@@ -363,7 +420,7 @@ export async function openTable(page: Page, tbl: string) {
     if (i === 2) {
       await page.reload().catch(() => {});
       await page.waitForLoadState('networkidle').catch(() => {});
-      await selectTab(page, /^tables$/i);
+      await selectContentType(page, 'Tables');
     }
     await cell.click({ timeout: 5000 }).catch(() => {});
     await page.waitForURL(target, { timeout: 6000 }).catch(() => {});

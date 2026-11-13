@@ -11,6 +11,7 @@ import {
   refreshWarehouses,
   seedWarehouseWithNamespace,
   selectTab,
+  selectContentType,
   addNamespace,
 } from '../_utils/warehouse';
 import { grantOnCurrentPanel, revokeAllOnCurrentPanel } from '../_utils/permissions';
@@ -182,7 +183,7 @@ test.describe('namespace refusals @authz', () => {
     try {
       await test.step('2 · the Tables list shows the table with no row actions', async () => {
         await openNamespace(anna, ns);
-        await selectTab(anna, /^tables$/i);
+        await selectContentType(anna, 'Tables');
         const row = tableRow(anna, tbl);
         await expect(row, 'anna should see the table: describe inherits to it').toBeVisible({
           timeout: 20000,
@@ -287,7 +288,7 @@ test.describe('namespace refusals @authz', () => {
     await ensureTable(page, tbl);
 
     await test.step('1 · the row offers Rename and Delete once its rights have answered', async () => {
-      await selectTab(page, /^tables$/i);
+      await selectContentType(page, 'Tables');
       const row = tableRow(page, tbl);
       await expect(row).toBeVisible({ timeout: 20000 });
       await expect(row.locator('button:has(.mdi-pencil-outline)')).toBeVisible({ timeout: 20000 });
