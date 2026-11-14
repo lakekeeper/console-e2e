@@ -80,4 +80,67 @@ test.describe('namespace contents @noauth @authn @authz @cedar', () => {
       await expect(page).toHaveURL(/\/table\/cnt_tbl/, { timeout: 15000 });
     });
   });
+
+  // A click on a row (not its name) shows the details beside the list; the ⓘ
+  // button per row does the same from the keyboard. Folded, the panel is inert,
+  // and focus that was inside it goes back to whatever opened it.
+  test('row details: click or keyboard, folded panel inert, focus returned', async ({
+    bootstrappedPage: page,
+  }) => {
+    test.setTimeout(180_000);
+    const wh = warehouseName(backend!);
+
+    await test.step('1 · a namespace holding a table', async () => {
+      await createWarehouse(page, backend!);
+      await openWarehouse(page, wh);
+      await addNamespace(page, 'det_parent');
+      await openNamespace(page, 'det_parent');
+      await addTable(page, 'det_tbl');
+      await selectTab(page, /^contents$/i);
+      await chip(page, 'All').click();
+      await expect(row(page, 'det_tbl')).toBeVisible({ timeout: 15000 });
+    });
+
+    const panel = page.locator('.dsp');
+    const details = page.locator('.cdp');
+
+    await test.step('2 · a click on the row opens its Iceberg details', async () => {
+      // The Type cell: the name is a link to the table and the buttons act.
+      await row(page, 'det_tbl').locator('td').nth(2).click();
+      await expect(details.locator('.cdp-title')).toContainText('det_tbl', { timeout: 15000 });
+      await expect(details.getByText(/^Iceberg v\d$/)).toBeVisible({ timeout: 20000 });
+      await expect(details.getByText('UUID', { exact: true })).toBeVisible();
+      await expect(panel).toHaveJSProperty('inert', false);
+      await expect(row(page, 'det_tbl')).toHaveClass(/nsc-row--active/);
+    });
+
+    await test.step('3 · a second click on the row folds it, and the folded panel is inert', async () => {
+      await row(page, 'det_tbl').locator('td').nth(2).click();
+      await expect(panel).toHaveJSProperty('inert', true, { timeout: 5000 });
+      await expect(panel).toHaveAttribute('aria-hidden', 'true');
+    });
+
+    const info = page.getByRole('button', { name: 'Details of det_tbl' });
+
+    await test.step('4 · the ⓘ button opens it from the keyboard', async () => {
+      await info.focus();
+      await page.keyboard.press('Enter');
+      await expect(panel).toHaveJSProperty('inert', false, { timeout: 5000 });
+      await expect(info).toHaveAttribute('aria-pressed', 'true');
+      await expect(details.locator('.cdp-title')).toContainText('det_tbl');
+    });
+
+    await test.step('5 · closing from inside the panel hands focus back to ⓘ', async () => {
+      await details.getByRole('button', { name: 'Close' }).click();
+      await expect(panel).toHaveJSProperty('inert', true, { timeout: 5000 });
+      await expect(info).toBeFocused();
+      await expect(info).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    await test.step('6 · Open in the panel goes to the table', async () => {
+      await info.click();
+      await details.getByRole('button', { name: /^open$/i }).click();
+      await expect(page).toHaveURL(/\/table\/det_tbl/, { timeout: 15000 });
+    });
+  });
 });

@@ -57,7 +57,15 @@ function tableViewport(table: Locator) {
  * fits; scrolling it moves; and the last row becomes reachable while the
  * `fixed-header` stays pinned.
  */
-export async function expectTableScrollsWithinViewport(page: Page, table: Locator, where: string) {
+export async function expectTableScrollsWithinViewport(
+  page: Page,
+  table: Locator,
+  where: string,
+  // A virtual table keeps spacer rows (no cells) above and below the rendered
+  // window; the last of those has no height at the bottom, so it is never "in
+  // the viewport". Such a table passes the selector for its real rows.
+  rows = 'tbody tr',
+) {
   await expect(table, `${where}: no data table on screen`).toBeVisible({ timeout: 20000 });
   const viewport = tableViewport(table);
   await expect(viewport, `${where}: the data table has no scroll wrapper`).toBeVisible({ timeout: 10000 });
@@ -95,7 +103,7 @@ export async function expectTableScrollsWithinViewport(page: Page, table: Locato
   // …and the rows below the fold are genuinely reachable, with the header still
   // pinned above them (the point of `fixed-header`).
   await expect(
-    table.locator('tbody tr').last(),
+    table.locator(rows).last(),
     `${where}: the last row is not on screen after scrolling to the bottom`,
   ).toBeInViewport({ timeout: 10000 });
   await expect(

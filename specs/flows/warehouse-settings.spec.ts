@@ -1,4 +1,6 @@
+import { Locator, Page } from '@playwright/test';
 import { test, expect } from '../_fixtures/auth.fixture';
+import { recoverFromOffline } from '../_utils/app';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
 import {
   createWarehouse,
@@ -7,6 +9,7 @@ import {
   selectTab,
   openWarehouseSettings,
   selectStorageProviderTab,
+  warehouseDialog,
 } from '../_utils/warehouse';
 
 // Saving storage from the fullscreen settings dialog used to report success in a
@@ -62,5 +65,111 @@ test.describe('warehouse settings @authn @authz @cedar', () => {
       await update.click();
       await expect(dialog).toBeHidden({ timeout: 60000 });
     });
+  });
+
+  /** The Soft deletion switch of the Settings pane (labelled by its state). */
+  const softSwitch = (dialog: Locator) =>
+    dialog.getByRole('checkbox', { name: /^(Enabled|Disabled)$/ }).first();
+  /** The dialog's own close (×, top left of its toolbar). */
+  const closeButton = (dialog: Locator) => dialog.locator('.v-toolbar button:has(.mdi-close)').first();
+  /** The deletion-profile chip on the Details tab. */
+  const profileChip = (page: Page) =>
+    page.locator('.v-chip').filter({ hasText: /^\s*(hard|soft)\s*$/ }).first();
+
+  // The menu mounts the settings dialog before the warehouse has been read, so
+  // its storage pane used to keep the placeholder profile (an empty S3 bucket)
+  // until a save. Opening it straight after a reload is that race.
+  test('the storage pane shows the stored profile, even opened right after a reload', async ({
+    bootstrappedPage: page,
+  }) => {
+    test.setTimeout(180_000);
+    const wh = warehouseName(backend!);
+    await createWarehouse(page, backend!);
+    await openWarehouse(page, wh);
+
+    await page.reload();
+    await recoverFromOffline(page);
+    const dialog = await openWarehouseSettings(page);
+    await selectStorageProviderTab(page, dialog);
+
+    const bucket = dialog.getByLabel(/^Bucket( \*)?$/i).filter({ visible: true }).first();
+    await expect(bucket).toHaveValue(process.env.S3_LOCAL_BUCKET || 'lakekeeper-test', {
+      timeout: 20000,
+    });
+  });
+
+  // The dialog stays mounted inside the menu, so closing alone kept an edit for
+  // the next open; "Discard and close" has to put the panes back.
+  test('Discard and close throws the edit away for the next open', async ({
+    bootstrappedPage: page,
+  }) => {
+    test.setTimeout(180_000);
+    const wh = warehouseName(backend!);
+    await createWarehouse(page, backend!);
+    await openWarehouse(page, wh);
+
+    const dialog = await openWarehouseSettings(page);
+    const name = dialog.getByLabel(/Warehouse Name/i).first();
+    await expect(name).toHaveValue(wh, { timeout: 20000 });
+
+    await test.step('1 · edit the name, then close and discard', async () => {
+      await name.fill(`${wh}-edited`);
+      await closeButton(dialog).click();
+      await page.getByRole('button', { name: /^discard and close$/i }).click();
+      await expect(dialog).toBeHidden({ timeout: 10000 });
+    });
+
+    await test.step('2 · reopened, the name is the stored one and nothing is unsaved', async () => {
+      const again = await openWarehouseSettings(page);
+      await expect(again.getByLabel(/Warehouse Name/i).first()).toHaveValue(wh, { timeout: 10000 });
+      await expect(again.getByRole('button', { name: /^save settings$/i })).toBeDisabled();
+    });
+  });
+
+  // Details holds its own copy of the warehouse; a save in Settings used to
+  // leave its deletion-profile chip on the old value until the page reloaded.
+  test('the Details tab shows a saved deletion profile without a reload', async ({
+    bootstrappedPage: page,
+  }) => {
+    test.setTimeout(180_000);
+    const wh = warehouseName(backend!);
+    await createWarehouse(page, backend!);
+    await openWarehouse(page, wh);
+    await selectTab(page, /^details$/i);
+
+    const before = ((await profileChip(page).innerText({ timeout: 20000 })) || '').trim();
+    const after = before === 'hard' ? 'soft' : 'hard';
+
+    await test.step(`1 · switch soft deletion ${after === 'soft' ? 'on' : 'off'} and save`, async () => {
+      const dialog = await openWarehouseSettings(page);
+      await softSwitch(dialog).click();
+      await dialog.getByRole('button', { name: /^save settings$/i }).click();
+      await expect(page.getByText('Warehouse settings updated successfully')).toBeVisible({
+        timeout: 20000,
+      });
+      await closeButton(dialog).click();
+      await expect(dialog).toBeHidden({ timeout: 10000 });
+    });
+
+    await test.step(`2 · Details says ${after}, with no reload`, async () => {
+      await expect(profileChip(page)).toHaveText(after, { timeout: 15000 });
+    });
+  });
+
+  // The chip is where people look for the switch, so it opens the settings at it.
+  test('the deletion-profile chip opens Settings at the soft-deletion switch', async ({
+    bootstrappedPage: page,
+  }) => {
+    test.setTimeout(180_000);
+    const wh = warehouseName(backend!);
+    await createWarehouse(page, backend!);
+    await openWarehouse(page, wh);
+    await selectTab(page, /^details$/i);
+
+    await profileChip(page).click({ timeout: 20000 });
+    const dialog = warehouseDialog(page);
+    await expect(dialog).toBeVisible({ timeout: 15000 });
+    await expect(dialog.getByRole('tab', { name: /^settings$/i })).toHaveAttribute('aria-selected', 'true');
+    await expect(softSwitch(dialog)).toBeVisible();
   });
 });

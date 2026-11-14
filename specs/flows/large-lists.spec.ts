@@ -67,17 +67,33 @@ test.describe('large lists — namespaces @authn @authz @cedar', () => {
       });
     }
 
-    // Reopen so the table loads the seeded rows rather than the empty list it
-    // mounted with — WarehouseNamespaces only fetches on mount.
+    // Reopen so the Contents table reads the seeded rows rather than the empty
+    // list it mounted with.
     await openWarehouse(page, wh);
 
     const table = visibleDataTable(page);
+    // The warehouse lists its namespaces in the Contents table: a virtual table
+    // (only the rows on screen are rendered) that reads 100 at a time and the
+    // next page as the reader nears the end.
+    const realRows = 'tbody tr:has(td.nsc-name)';
     await expect(table.getByText(seededName('ns', 1), { exact: true })).toBeVisible({ timeout: 20000 });
-    // 50 rows per page is the component's default; fewer means the list never
-    // filled and the geometry assertions below would pass vacuously.
-    await expect.poll(() => table.locator('tbody tr').count(), { timeout: 20000 }).toBeGreaterThanOrEqual(50);
+    await expect(
+      page.getByText(/loaded — scroll to the end for more/),
+      'the first page should say more is to come',
+    ).toBeVisible({ timeout: 20000 });
 
-    await expectTableScrollsWithinViewport(page, table, 'warehouse namespaces');
+    await test.step('scrolling to the end reads the rest, down to the last namespace', async () => {
+      const last = table.getByText(seededName('ns', ROWS), { exact: true });
+      const wrapper = table.locator('.v-table__wrapper').first();
+      for (let i = 0; i < 12 && !(await last.isVisible().catch(() => false)); i++) {
+        await wrapper.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+        await page.waitForTimeout(800);
+      }
+      await expect(last, `${seededName('ns', ROWS)} never became reachable`).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(/loaded — scroll to the end for more/)).toHaveCount(0);
+    });
+
+    await expectTableScrollsWithinViewport(page, table, 'warehouse contents', realRows);
   });
 });
 
