@@ -114,7 +114,7 @@ test.describe('loqe @authn @authz @cedar', () => {
       await rail.getByRole('button', { name: 'Tab history' }).click();
       await expect(runs.first()).toContainText('1 row');
       await runs.first().click();
-      const name = page.getByPlaceholder('Name this run');
+      const name = page.getByRole('textbox', { name: 'Run name' });
       await name.fill('the answer');
       await name.press('Enter');
       await page.keyboard.press('Escape');
@@ -147,22 +147,34 @@ test.describe('loqe @authn @authz @cedar', () => {
     });
 
     await test.step('7 · a run can be removed from the history', async () => {
+      // Open in new tab leaves focus on the tab bar; the run key is the editor's.
+      await editor.click();
       await page.keyboard.press('ControlOrMeta+Enter');
       await expect(spinner).toBeHidden({ timeout: 60000 });
       await expect(runs).toHaveCount(1, { timeout: 10000 });
       await runs.first().click();
       await page.getByRole('button', { name: 'Remove from history' }).click();
+      await page.getByRole('button', { name: 'Confirm remove' }).click();
       await expect(runs).toHaveCount(0);
     });
+  });
 
-    await test.step('8 · Esc cancels a running query even with focus outside the editor', async () => {
-      await clear();
-      await page.keyboard.type('SELECT count(*) FROM range(100000000000)');
-      await page.keyboard.press('ControlOrMeta+Enter');
-      await expect(spinner).toBeVisible({ timeout: 10000 });
-      await page.getByRole('button', { name: 'Tab history' }).focus();
-      await page.keyboard.press('Escape');
-      await expect(spinner).toBeHidden({ timeout: 20000 });
-    });
+  // The engine sends statements, so cancelSent() interrupts one mid-run (VAK-903).
+  test('Esc cancels a running query even with focus outside the editor', async ({
+    bootstrappedPage: page,
+  }) => {
+    await page.goto('/ui/loqe');
+    await expect(page.getByText('Ready', { exact: true }).first()).toBeVisible({ timeout: 90000 });
+    const editor = page.locator('.cm-content').first();
+    const spinner = page.getByText('Running query…');
+    await editor.click();
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('SELECT count(*) FROM range(100000000000)');
+    await page.keyboard.press('ControlOrMeta+Enter');
+    await expect(spinner).toBeVisible({ timeout: 10000 });
+    await page.getByText('Local Query Engine', { exact: true }).click();
+    await page.keyboard.press('Escape');
+    await expect(spinner).toBeHidden({ timeout: 20000 });
   });
 });
