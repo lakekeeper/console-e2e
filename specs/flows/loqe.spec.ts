@@ -159,6 +159,57 @@ test.describe('loqe @authn @authz @cedar', () => {
     });
   });
 
+  // Every run is profiled: its summary is kept with the history entry and the
+  // plan as it ran beside it, and the History view's run details show both.
+  test('History view: a run with its profile and plan', async ({ bootstrappedPage: page }) => {
+    test.setTimeout(180_000);
+    await page.goto('/ui/loqe');
+    await expect(page.getByText('Ready', { exact: true }).first()).toBeVisible({ timeout: 90000 });
+    const editor = page.locator('.cm-content').first();
+
+    await test.step('1 · a grouping query runs in the editor', async () => {
+      await editor.click();
+      await page.keyboard.press('ControlOrMeta+A');
+      await page.keyboard.press('Delete');
+      await page.keyboard.type('SELECT a % 7 AS k, count(*) AS n FROM range(100000) t(a) GROUP BY 1');
+      await page.keyboard.press('ControlOrMeta+Enter');
+      await expect(page.getByText('Running query…')).toBeHidden({ timeout: 60000 });
+      await expect(page.locator('.loqe-result-table').first()).toContainText('14286', {
+        timeout: 15000,
+      });
+    });
+
+    await test.step('2 · History lists it, and its details hold the profile', async () => {
+      await page.getByRole('tab', { name: /^History/ }).click();
+      const row = page.locator('.lqh-table tbody tr').filter({ hasText: 'range(100000)' }).first();
+      await expect(row).toBeVisible({ timeout: 10000 });
+      await row.click();
+      const stats = page.getByLabel('Run statistics');
+      await expect(stats).toContainText('Rows scanned', { timeout: 10000 });
+      await expect(stats).toContainText('100,000');
+      await expect(stats).toContainText('Peak memory');
+    });
+
+    await test.step('3 · the plan as a graph, and as a list of operators', async () => {
+      const details = page.locator('.lqh-details');
+      await details.getByRole('tab', { name: 'Plan' }).click();
+      const graph = details.locator('.lpg-svg');
+      await expect(graph).toContainText('RANGE', { timeout: 10000 });
+      await expect(graph).toContainText(/GROUP_BY/);
+      await details.getByRole('button', { name: /^RANGE/ }).click();
+      await expect(details.locator('.lpg-info')).toContainText('rows out');
+
+      await details.getByRole('tab', { name: 'Operators' }).click();
+      await expect(details.locator('.lpt').first()).toContainText('RANGE');
+      await details.getByRole('tab', { name: 'Overview' }).click();
+    });
+
+    await test.step('4 · Go to tab returns to the editor holding it', async () => {
+      await page.locator('.lqh-details').getByRole('button', { name: 'Go to tab' }).click();
+      await expect(editor).toContainText('range(100000)');
+    });
+  });
+
   // The engine sends statements, so cancelSent() interrupts one mid-run (VAK-903).
   test('Esc cancels a running query even with focus outside the editor', async ({
     bootstrappedPage: page,
