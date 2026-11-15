@@ -301,7 +301,7 @@ test.describe('maintenance dashboard gate @authz @cedar', () => {
     await test.step('peter: no denial at any point while rights load', async () => {
       await watchDom(page, [NO_PROJECT_ACCESS, NO_ACCESS_AT_ALL]);
       await gotoReady(page, '/ui/maintenance');
-      await expect(page.getByRole('tab', { name: /status/i }).first()).toBeVisible({ timeout: 20000 });
+      await expect(page.getByRole('tab', { name: /^tasks$/i }).first()).toBeVisible({ timeout: 20000 });
       await page.waitForLoadState('networkidle').catch(() => {});
       const { texts } = await seen(page);
       expect(texts, 'the admin must never be shown a maintenance denial').toEqual([]);

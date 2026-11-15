@@ -83,6 +83,19 @@ test.describe('warehouse managed by an instance admin @authz', () => {
   }) => {
     test.setTimeout(300_000);
 
+    await test.step('0 · anna signs in once, so the grant dialog can find her', async () => {
+      // A user is known to the server only after a first sign-in. Run alone,
+      // no earlier spec has signed anna in, and the search for her finds no one.
+      const ctx = await browser.newContext({ baseURL: ANNA_BASE_URL });
+      try {
+        const first = await ctx.newPage();
+        await login(first, TEST_USER_2);
+        await gotoReady(first, '/ui/warehouse');
+      } finally {
+        await ctx.close();
+      }
+    });
+
     const { wh } = await test.step('1 · peter marks a warehouse managed and grants anna modify', async () => {
       const seed = await seedWarehouseWithNamespace(page, backend!, 'managed_ns', `rfmanaged${SUFFIX}`);
       seeded = seed.wh;

@@ -84,8 +84,8 @@ export const OPTIMIZE_STEPS = [
   'Rewrite manifests',
 ] as const;
 
-/** The two a run does when nobody narrows it. */
-export const OPTIMIZE_DEFAULT_STEPS = ['Compaction', 'Rewrite manifests'] as const;
+/** What a run does when nobody narrows it: all four steps, preselected. */
+export const OPTIMIZE_DEFAULT_STEPS = OPTIMIZE_STEPS;
 
 /** The caption the pickers show only once the pick is narrowed AND includes the
  *  manifest rewrite — the one step whose manual behaviour differs from its

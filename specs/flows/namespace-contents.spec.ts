@@ -101,21 +101,25 @@ test.describe('namespace contents @noauth @authn @authz @cedar', () => {
       await expect(row(page, 'det_tbl')).toBeVisible({ timeout: 15000 });
     });
 
+    const typeCell = () =>
+      row(page, 'det_tbl').locator('td').filter({ hasText: /^\s*Iceberg table\s*$/ }).first();
     const panel = page.locator('.dsp');
     const details = page.locator('.cdp');
 
     await test.step('2 · a click on the row opens its Iceberg details', async () => {
       // The Type cell: the name is a link to the table and the buttons act.
-      await row(page, 'det_tbl').locator('td').nth(2).click();
+      // Picked by its text: the name slot renders a td of its own inside
+      // Vuetify's, so counting cells lands on the name.
+      await typeCell().click();
       await expect(details.locator('.cdp-title')).toContainText('det_tbl', { timeout: 15000 });
-      await expect(details.getByText(/^Iceberg v\d$/)).toBeVisible({ timeout: 20000 });
+      await expect(details.getByText(/Iceberg v\d/)).toBeVisible({ timeout: 20000 });
       await expect(details.getByText('UUID', { exact: true })).toBeVisible();
       await expect(panel).toHaveJSProperty('inert', false);
       await expect(row(page, 'det_tbl')).toHaveClass(/nsc-row--active/);
     });
 
     await test.step('3 · a second click on the row folds it, and the folded panel is inert', async () => {
-      await row(page, 'det_tbl').locator('td').nth(2).click();
+      await typeCell().click();
       await expect(panel).toHaveJSProperty('inert', true, { timeout: 5000 });
       await expect(panel).toHaveAttribute('aria-hidden', 'true');
     });

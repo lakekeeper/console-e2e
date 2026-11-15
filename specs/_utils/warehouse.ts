@@ -385,6 +385,13 @@ export function navTreeItem(page: Page, name: string) {
 
 /** Select rows in the namespace's table list and bulk-delete them. */
 export async function bulkDeleteTables(page: Page, names: string[]) {
+  // A "New" menu left open by the create before (firefox keeps it a beat
+  // longer) lies over the rows and eats the checkbox clicks.
+  const menu = page.locator('.v-overlay-container .v-menu .v-list').filter({ visible: true });
+  for (let i = 0; i < 3 && (await menu.count()) > 0; i++) {
+    await page.keyboard.press('Escape');
+    await menu.first().waitFor({ state: 'hidden', timeout: 2000 }).catch(() => {});
+  }
   for (const name of names) {
     const row = page.getByRole('row', { name: new RegExp(`\\b${name}\\b`) }).first();
     await row.getByRole('checkbox').first().check();

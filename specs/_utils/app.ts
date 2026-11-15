@@ -70,7 +70,13 @@ export async function expectPanesReadable(page: Page, where: string) {
   // on screen has to be picked by visibility, not by position.
   const pane = page.locator('.v-window-item:visible').first();
   if (await pane.count()) {
-    const text = (await pane.innerText().catch(() => '')).trim();
-    expect(text.length, `${where}: the visible pane has no text`).toBeGreaterThan(0);
+    // The pane mounts before its content does (firefox shows the gap), so give
+    // it a moment to fill rather than read it once.
+    await expect
+      .poll(async () => ((await pane.innerText().catch(() => '')) || '').trim().length, {
+        message: `${where}: the visible pane has no text`,
+        timeout: 10000,
+      })
+      .toBeGreaterThan(0);
   }
 }

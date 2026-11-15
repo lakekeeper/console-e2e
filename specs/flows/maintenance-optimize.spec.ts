@@ -1,4 +1,5 @@
 import { test, expect } from '../_fixtures/auth.fixture';
+import { apiHeaders, warehouseIdOf } from '../_utils/grants';
 import { ENABLED_BACKENDS } from '../_data/storage-backends';
 import { recoverFromOffline } from '../_utils/app';
 import {
@@ -64,11 +65,13 @@ test.describe('optimize maintenance @authz @cedar', () => {
     const wasOn = await master.isChecked();
 
     await master.click();
+    // Turning a queue on or off for the whole warehouse asks first.
+    await page.getByRole('button', { name: wasOn ? /^disable$/i : /^enable$/i }).last().click();
     await expect(master).toBeChecked({ checked: !wasOn });
 
     // The rail marks the pane dirty; a successful save must clear it.
     const dirtyPane = dialog.getByRole('tab', { name: /task configuration/i }).first();
-    await expect(dirtyPane.locator('.v-badge, .mdi-circle-small, [class*="dot"]').first()).toBeVisible({
+    await expect(dirtyPane.locator('.v-badge, .mdi-circle, .mdi-circle-small, [class*="dot"]').first()).toBeVisible({
       timeout: 10000,
     });
 
@@ -80,7 +83,7 @@ test.describe('optimize maintenance @authz @cedar', () => {
 
     await test.step('and the unsaved-changes dot clears', async () => {
       await expect(
-        dirtyPane.locator('.v-badge, .mdi-circle-small, [class*="dot"]').first(),
+        dirtyPane.locator('.v-badge, .mdi-circle, .mdi-circle-small, [class*="dot"]').first(),
       ).toBeHidden({ timeout: 15000 });
     });
 
@@ -99,6 +102,7 @@ test.describe('optimize maintenance @authz @cedar', () => {
     // Leave the warehouse as it was found: combos share backend state.
     const restore = maintenanceDialog(page);
     await restore.getByLabel('Enable optimize').first().click();
+    await page.getByRole('button', { name: wasOn ? /^enable$/i : /^disable$/i }).last().click();
     await restore.getByRole('button', { name: /save configuration/i }).click();
     await expect(page.getByText('Task configuration saved.')).toBeVisible({ timeout: 20000 });
   });
@@ -129,7 +133,7 @@ test.describe('optimize maintenance @authz @cedar', () => {
           timeout: 20000,
         });
       }
-      await expect(dialog.getByText(/The usual run: compaction and manifest rewrite/i)).toBeVisible();
+      await expect(dialog.getByText(/The usual run: all four steps/i)).toBeVisible();
       // The default pair sends no step list at all, so the caption must NOT be
       // the narrowed one — that difference is the whole behaviour.
       await expect(dialog.getByText(MANIFEST_REWRITE_HINT)).toHaveCount(0);
@@ -142,14 +146,16 @@ test.describe('optimize maintenance @authz @cedar', () => {
     });
 
     await test.step('and dropping it takes the explanation away', async () => {
+      // The two delete steps are still picked, so it stays a narrowed run.
       await dialog.getByText('Rewrite manifests', { exact: true }).first().click();
-      await expect(dialog.getByText(/Pick at least one step/i)).toBeVisible({ timeout: 10000 });
+      await expect(dialog.getByText(/Only the chosen steps run/i)).toBeVisible({ timeout: 10000 });
       await expect(dialog.getByText(MANIFEST_REWRITE_HINT)).toHaveCount(0);
     });
   });
 
   test('the bulk schedule dialog offers the same steps and keeps its results', async ({
     bootstrappedPage: page,
+    project,
   }) => {
     test.setTimeout(240_000);
 
@@ -159,11 +165,21 @@ test.describe('optimize maintenance @authz @cedar', () => {
     const tbl = `opt_bulk_${(process.env.E2E_RESOURCE_SUFFIX || 'x').replace(/\W/g, '')}`;
     await ensureTable(page, tbl);
 
+    // A manual run is refused on a queue the warehouse has not enabled (and the
+    // table does not override), so turn optimize on: the last step needs a run
+    // that succeeds, since only a success used to close the dialog.
+    const whId = await warehouseIdOf(page, project.id, wh);
+    const enable = await page.request.post(
+      `${process.env.LK_API_URL || 'http://localhost:8181'}/management/v1/warehouse/${whId}/task-queue/optimize/config`,
+      { headers: await apiHeaders(page, project.id), data: { 'queue-config': { 'enable-optimize': true } } },
+    );
+    expect(enable.ok(), await enable.text()).toBe(true);
+
     await page.goto('/ui/maintenance');
     await page.waitForLoadState('domcontentloaded');
     await recoverFromOffline(page);
 
-    await page.getByRole('button', { name: /schedule/i }).first().click();
+    await page.getByRole('button', { name: /^schedule$/i }).first().click();
     const dialog = page
       .locator('.v-overlay__content')
       .filter({ hasText: 'Schedule maintenance task' })
@@ -171,12 +187,18 @@ test.describe('optimize maintenance @authz @cedar', () => {
     await expect(dialog).toBeVisible({ timeout: 30000 });
 
     // Pick the table in the tree on the left.
-    await dialog.getByText(wh, { exact: true }).first().click();
-    await dialog.getByText(tbl, { exact: true }).first().click();
+    // The warehouse opens expanded: open the namespace, then pick the table
+    // with its ⊕ (a click on the name only selects the tree row).
+    if (!(await dialog.getByText(tbl, { exact: true }).first().isVisible().catch(() => false))) {
+      await dialog.getByRole('treeitem', { name: ns, exact: true }).first().locator('button').first().click();
+    }
+    await dialog.getByRole('button', { name: `Pick ${tbl}`, exact: true }).click({ timeout: 20000 });
     await expect(dialog.getByText(/SELECTED TABLES \(1\)/i)).toBeVisible({ timeout: 20000 });
 
     const optimize = dialog.getByRole('checkbox', { name: /^optimize$/i }).first();
     await optimize.check();
+    // Expire snapshots is ticked by default and its queue is off here.
+    await dialog.getByRole('checkbox', { name: /^expire snapshots$/i }).first().uncheck();
 
     await test.step('the steps appear, the usual pair preselected', async () => {
       // Regression: these were rendered through a v-chip-group, whose slide-group
@@ -187,7 +209,7 @@ test.describe('optimize maintenance @authz @cedar', () => {
           timeout: 20000,
         });
       }
-      await expect(dialog.getByText(/The usual run: compaction and manifest rewrite/i)).toBeVisible();
+      await expect(dialog.getByText(/The usual run: all four steps/i)).toBeVisible();
     });
 
     await test.step('an empty pick blocks scheduling, with a reason', async () => {
@@ -205,7 +227,7 @@ test.describe('optimize maintenance @authz @cedar', () => {
     });
 
     await test.step('a successful run leaves its results on screen', async () => {
-      await dialog.getByRole('button', { name: /^schedule$/i }).last().click();
+      await dialog.getByRole('button', { name: /^schedule\b/i }).last().click();
       // The dialog used to close itself when nothing failed, taking the results
       // with it. It must stay up, and the footer must offer Close.
       await expect(dialog.getByText(/scheduled/i).first()).toBeVisible({ timeout: 60000 });

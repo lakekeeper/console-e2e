@@ -515,13 +515,14 @@ for (const app of apps) {
 
       // tests (Playwright boots the app dev server)
       buildDashboard({ RUN_IN_PROGRESS: '1', RUN_CURRENT: `${app}·${mode}` }); // "now running"
-      const code = await runPlaywright(app, mode);
+      // BROWSER_ONLY=firefox|webkit: one pass on that browser, no cross-browser.
+      const code = await runPlaywright(app, mode, env.BROWSER_ONLY || 'chromium');
       results.push({ app, mode, code });
       buildDashboard({ RUN_IN_PROGRESS: '1' }); // column now filled, run still going
 
       // 3D matrix (cross-browser). The stack is up, so run extra browsers now.
       // Skip when filtering (--grep) or via NO_CROSS_BROWSER=1.
-      if (!env.NO_CROSS_BROWSER) {
+      if (!env.NO_CROSS_BROWSER && !env.BROWSER_ONLY) {
         // firefox: FULL parity with chromium — runs the whole mode suite every
         // combo (LoQE/DuckDB-WASM works headless in firefox).
         await resetBackend(stackEnv, mode);

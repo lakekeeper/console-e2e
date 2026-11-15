@@ -192,7 +192,7 @@ test.describe('namespace refusals @authz', () => {
         // "no button" a no rather than "not asked yet".
         await anna.waitForLoadState('networkidle').catch(() => {});
         await anna.waitForTimeout(1500);
-        await expect(row.locator('button:has(.mdi-pencil-outline)')).toHaveCount(0);
+        await expect(row.locator('button:has(.mdi-rename-outline)')).toHaveCount(0);
         await expect(row.locator('button:has(.mdi-delete-outline)')).toHaveCount(0);
       });
 
@@ -291,7 +291,7 @@ test.describe('namespace refusals @authz', () => {
       await selectContentType(page, 'Tables');
       const row = tableRow(page, tbl);
       await expect(row).toBeVisible({ timeout: 20000 });
-      await expect(row.locator('button:has(.mdi-pencil-outline)')).toBeVisible({ timeout: 20000 });
+      await expect(row.locator('button:has(.mdi-rename-outline)')).toBeVisible({ timeout: 20000 });
       await expect(row.locator('button:has(.mdi-delete-outline)')).toBeVisible({ timeout: 20000 });
     });
 
