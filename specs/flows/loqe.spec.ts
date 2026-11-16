@@ -114,7 +114,8 @@ test.describe('loqe @authn @authz @cedar', () => {
       await rail.getByRole('button', { name: 'Tab history' }).click();
       await expect(runs.first()).toContainText('1 row');
       await runs.first().click();
-      const name = page.getByRole('textbox', { name: 'Run name' });
+      // The field's accessible name is its visible label; Vuetify puts aria-label on the wrapper.
+      const name = page.locator('.history-rail__card').getByRole('textbox', { name: 'Name', exact: true });
       await name.fill('the answer');
       await name.press('Enter');
       await page.keyboard.press('Escape');

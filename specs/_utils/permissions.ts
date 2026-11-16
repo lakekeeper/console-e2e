@@ -161,7 +161,10 @@ export async function revokeAllOnCurrentPanel(page: Page, username: string) {
     .filter({ hasText: /Revoke all grants/i })
     .last();
   if (await confirm.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
-    await confirm.getByRole('button', { name: /^revoke$/i }).click({ timeout: 8000 }).catch(() => {});
+    // The dialog's confirm button is "Revoke all" (the row's opener has the same
+    // name, so scope to the dialog). A missed confirm must fail, not pass silently.
+    await confirm.getByRole('button', { name: 'Revoke all', exact: true }).click({ timeout: 8000 });
+    await expect(confirm).toBeHidden({ timeout: 15000 });
   }
   await expect(row).toBeHidden({ timeout: 15000 }).catch(() => {});
 }
